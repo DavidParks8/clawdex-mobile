@@ -6,7 +6,7 @@ This repo is a monorepo for controlling Codex from a phone.
 
 - Primary product path:
   - `apps/mobile`: Expo React Native client
-  - `services/rust-bridge`: current backend bridge (`codex app-server` adapter + terminal/git/attachments/voice helpers)
+  - `services/rust-bridge`: current backend bridge (`codex app-server` adapter + terminal/git/attachment helpers)
   - `bin/clawdex.js` + `scripts/*`: operator CLI and setup/runtime automation
 - Legacy/reference path:
   - `services/mac-bridge`: older TypeScript bridge with useful tests/reference code, but not the primary runtime
@@ -21,7 +21,6 @@ Use the existing docs as the source of truth instead of duplicating them in code
 - Setup, secure env flow, verification, smoke tests, API summary: `docs/setup-and-operations.md`
 - Troubleshooting and recovery commands: `docs/troubleshooting.md`
 - Realtime/live-sync constraints: `docs/realtime-streaming-limitations.md`
-- Voice transcription architecture: `docs/voice-transcription.md`
 - Push notifications (bridge-sent turn/approval alerts): `docs/push-notifications.md`
 - EAS and native build/release notes: `docs/eas-builds.md`
 - Open-source and notice obligations: `docs/open-source-license-requirements.md`
@@ -92,7 +91,7 @@ Use the existing docs as the source of truth instead of duplicating them in code
   - `GET /rpc` for WebSocket JSON-RPC
   - `GET /local-image` for mobile image rendering of local/absolute paths
 - The Rust bridge spawns `codex app-server --listen stdio://` and forwards an allowlist of `thread/*`, `turn/*`, `review/start`, `model/list`, `skills/list`, `app/list`, and related methods.
-- Bridge-native RPC methods include attachments upload, voice transcription, terminal exec, git operations, approvals, user-input resolution, and event replay.
+- Bridge-native RPC methods include attachments upload, terminal exec, git operations, approvals, user-input resolution, and event replay.
 
 ### Realtime model
 
@@ -234,7 +233,7 @@ Use `docs/setup-and-operations.md` as the canonical smoke-test runbook. Minimum 
 - creating and running a chat
 - approvals or plan-mode flow when relevant
 - git actions if git-related code changed
-- attachments or voice if those paths changed
+- attachments if those paths changed
 
 ## Security Guardrails
 
@@ -265,8 +264,6 @@ Update the relevant docs when changing these areas:
   - `docs/troubleshooting.md`
 - Realtime/live-sync behavior:
   - `docs/realtime-streaming-limitations.md`
-- Voice recording/transcription behavior:
-  - `docs/voice-transcription.md`
 - EAS/native build or store release flow:
   - `docs/eas-builds.md`
 - Legal/license obligations:

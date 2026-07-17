@@ -355,7 +355,6 @@ Automation verifies tag/version consistency and publishes to npm.
 - `bridge/health/read`
 - `bridge/terminal/exec`
 - `bridge/attachments/upload`
-- `bridge/voice/transcribe`
 - `bridge/git/status`
 - `bridge/git/diff`
 - `bridge/git/commit`

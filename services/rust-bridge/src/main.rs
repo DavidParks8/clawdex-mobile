@@ -63,7 +63,6 @@ const ACCOUNT_CHATGPT_TOKENS_REFRESH_METHOD: &str = "account/chatgptAuthTokens/r
 const BRIDGE_CHATGPT_AUTH_CACHE_FILE_NAME: &str = "chatgpt-auth.json";
 const MOBILE_ATTACHMENTS_DIR: &str = ".clawdex-mobile-attachments";
 const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
-const DEFAULT_MAX_VOICE_TRANSCRIPTION_BYTES: usize = 100 * 1024 * 1024;
 const NOTIFICATION_REPLAY_BUFFER_SIZE: usize = 2_000;
 const NOTIFICATION_REPLAY_MAX_LIMIT: usize = 1_000;
 const INTERNAL_NOTIFICATION_CHANNEL_CAPACITY: usize = 1_024;
@@ -7061,21 +7060,6 @@ struct AttachmentUploadResponse {
     kind: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VoiceTranscribeRequest {
-    data_base64: String,
-    prompt: Option<String>,
-    file_name: Option<String>,
-    mime_type: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct VoiceTranscribeResponse {
-    text: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PendingApproval {
@@ -8922,12 +8906,6 @@ async fn handle_bridge_method(
                 "request": user_input_request,
             }))
         }
-        "bridge/voice/transcribe" => {
-            let request: VoiceTranscribeRequest =
-                serde_json::from_value(params.unwrap_or_else(|| json!({})))
-                    .map_err(|e| BridgeError::invalid_params(&e.to_string()))?;
-            transcribe_voice(request).await
-        }
         _ => Err(BridgeError::method_not_found(&format!(
             "Unknown bridge method: {method}"
         ))),
@@ -9393,90 +9371,6 @@ async fn list_filesystem_entries(
     })
 }
 
-async fn transcribe_voice(request: VoiceTranscribeRequest) -> Result<Value, BridgeError> {
-    let max_voice_transcription_bytes = resolve_max_voice_transcription_bytes();
-    let estimated_size = estimate_base64_decoded_size(&request.data_base64)?;
-    if estimated_size > max_voice_transcription_bytes {
-        return Err(BridgeError::invalid_params(&format!(
-            "audio payload exceeds max size of {max_voice_transcription_bytes} bytes",
-        )));
-    }
-
-    let audio_bytes = decode_base64_payload(&request.data_base64)?;
-
-    // Minimum ~16KB — roughly 0.5s at 16kHz 16-bit mono.
-    if audio_bytes.len() < 16_000 {
-        return Err(BridgeError::invalid_params(
-            "audio payload too short (minimum ~0.5 seconds required)",
-        ));
-    }
-    if audio_bytes.len() > max_voice_transcription_bytes {
-        return Err(BridgeError::invalid_params(&format!(
-            "audio payload exceeds max size of {max_voice_transcription_bytes} bytes",
-        )));
-    }
-
-    // Resolve auth: env vars first, then ~/.codex/auth.json.
-    let (endpoint, bearer_token, include_model) = resolve_transcription_auth()?;
-    let normalized_mime_type = normalize_transcription_mime_type(request.mime_type.as_deref());
-    let normalized_file_name =
-        normalize_transcription_file_name(request.file_name.as_deref(), &normalized_mime_type);
-
-    let file_part = reqwest::multipart::Part::bytes(audio_bytes)
-        .file_name(normalized_file_name)
-        .mime_str(&normalized_mime_type)
-        .map_err(|e| BridgeError::server(&e.to_string()))?;
-
-    let mut form = reqwest::multipart::Form::new().part("file", file_part);
-
-    if include_model {
-        form = form.text("model", "gpt-4o-transcribe");
-    }
-
-    if let Some(prompt) = request.prompt {
-        let trimmed = prompt.trim().to_string();
-        if !trimmed.is_empty() {
-            form = form.text("prompt", trimmed);
-        }
-    }
-
-    let response = transcription_http_client()
-        .post(&endpoint)
-        .bearer_auth(&bearer_token)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| BridgeError::server(&e.to_string()))?;
-
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<unreadable>".to_string());
-        return Err(BridgeError {
-            code: -32000,
-            message: format!("transcription API returned HTTP {status}"),
-            data: Some(json!({ "status": status, "body": body })),
-        });
-    }
-
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|e| BridgeError::server(&e.to_string()))?;
-
-    let text = body["text"].as_str().unwrap_or("").to_string();
-
-    Ok(serde_json::to_value(VoiceTranscribeResponse { text })
-        .map_err(|e| BridgeError::server(&e.to_string()))?)
-}
-
-fn transcription_http_client() -> &'static HttpClient {
-    static CLIENT: OnceLock<HttpClient> = OnceLock::new();
-    CLIENT.get_or_init(HttpClient::new)
-}
-
 fn bridge_chatgpt_auth_cache() -> &'static StdRwLock<Option<BridgeChatGptAuthBundle>> {
     static CACHE: OnceLock<StdRwLock<Option<BridgeChatGptAuthBundle>>> = OnceLock::new();
     CACHE.get_or_init(|| StdRwLock::new(None))
@@ -9579,11 +9473,6 @@ fn resolve_bridge_chatgpt_auth_bundle_for_refresh() -> Option<BridgeChatGptAuthB
     read_cached_bridge_chatgpt_auth()
 }
 
-fn resolve_bridge_chatgpt_access_token_for_transcription() -> Option<String> {
-    read_non_empty_env("BRIDGE_CHATGPT_ACCESS_TOKEN")
-        .or_else(|| read_cached_bridge_chatgpt_auth().map(|auth| auth.access_token))
-}
-
 fn extract_chatgpt_auth_tokens_from_account_login_start(
     params: Option<&Value>,
 ) -> Option<BridgeChatGptAuthBundle> {
@@ -9611,95 +9500,6 @@ fn extract_chatgpt_auth_tokens_from_account_login_start(
         account_id: account_id.to_string(),
         plan_type,
     })
-}
-
-fn resolve_transcription_auth() -> Result<(String, String, bool), BridgeError> {
-    // Path 1: OPENAI_API_KEY env var → OpenAI direct API.
-    if let Some(api_key) = read_non_empty_env("OPENAI_API_KEY") {
-        return Ok((
-            "https://api.openai.com/v1/audio/transcriptions".to_string(),
-            api_key,
-            true,
-        ));
-    }
-
-    // Path 2: bridge ChatGPT auth (env, cached legacy mobile login, or persisted bridge cache)
-    // → ChatGPT backend.
-    if let Some(access_token) = resolve_bridge_chatgpt_access_token_for_transcription() {
-        return Ok((
-            "https://chatgpt.com/backend-api/transcribe".to_string(),
-            access_token,
-            false,
-        ));
-    }
-
-    // Fall back to ~/.codex/auth.json.
-    let auth_path = resolve_codex_auth_json_path();
-    if let Some(path) = auth_path {
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            if let Ok(auth) = serde_json::from_str::<Value>(&contents) {
-                // Check for OPENAI_API_KEY field.
-                if let Some(key) = auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) {
-                    let trimmed = key.trim();
-                    if !trimmed.is_empty() {
-                        return Ok((
-                            "https://api.openai.com/v1/audio/transcriptions".to_string(),
-                            trimmed.to_string(),
-                            true,
-                        ));
-                    }
-                }
-
-                // Check for chatgpt auth mode with access_token.
-                let is_chatgpt_mode = auth
-                    .get("auth_mode")
-                    .and_then(|v| v.as_str())
-                    .map(|m| m == "chatgpt")
-                    .unwrap_or(false);
-
-                if is_chatgpt_mode {
-                    if let Some(token) = auth
-                        .get("tokens")
-                        .and_then(|t| t.get("access_token"))
-                        .and_then(|v| v.as_str())
-                    {
-                        let trimmed = token.trim();
-                        if !trimmed.is_empty() {
-                            return Ok((
-                                "https://chatgpt.com/backend-api/transcribe".to_string(),
-                                trimmed.to_string(),
-                                false,
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Err(BridgeError {
-        code: -32002,
-        message:
-            "no transcription credentials found: set OPENAI_API_KEY or BRIDGE_CHATGPT_ACCESS_TOKEN, or finish Codex-managed ChatGPT login so auth.json exists"
-                .to_string(),
-        data: None,
-    })
-}
-
-fn resolve_codex_auth_json_path() -> Option<PathBuf> {
-    if let Some(codex_home) = read_non_empty_env("CODEX_HOME") {
-        let path = PathBuf::from(codex_home).join("auth.json");
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let home = read_non_empty_env("HOME")?;
-    let path = PathBuf::from(home).join(".codex").join("auth.json");
-    if path.is_file() {
-        Some(path)
-    } else {
-        None
-    }
 }
 
 async fn send_rpc_error(
@@ -11966,13 +11766,6 @@ fn parse_connect_url_env(name: &str) -> Result<Option<String>, String> {
     normalize_connect_url(&raw)
         .ok_or_else(|| format!("{name} must be a valid http:// or https:// base URL"))
         .map(Some)
-}
-
-fn resolve_max_voice_transcription_bytes() -> usize {
-    read_non_empty_env("BRIDGE_MAX_VOICE_TRANSCRIPTION_BYTES")
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_MAX_VOICE_TRANSCRIPTION_BYTES)
 }
 
 fn constant_time_eq(left: &str, right: &str) -> bool {
@@ -14366,62 +14159,6 @@ fn decode_base64_payload(raw: &str) -> Result<Vec<u8>, BridgeError> {
         .map_err(|error| {
             BridgeError::invalid_params(&format!("invalid base64 attachment payload: {error}"))
         })
-}
-
-fn normalize_transcription_mime_type(raw_mime_type: Option<&str>) -> String {
-    let Some(raw_mime_type) = raw_mime_type
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return "audio/wav".to_string();
-    };
-
-    let base_mime = raw_mime_type
-        .split(';')
-        .next()
-        .map(str::trim)
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    match base_mime.as_str() {
-        "audio/wav" | "audio/x-wav" | "audio/wave" => "audio/wav".to_string(),
-        "audio/mp4" => "audio/mp4".to_string(),
-        "audio/m4a" | "audio/x-m4a" => "audio/m4a".to_string(),
-        "audio/aac" => "audio/aac".to_string(),
-        "audio/mpeg" | "audio/mp3" | "audio/mpga" => "audio/mpeg".to_string(),
-        "audio/webm" => "audio/webm".to_string(),
-        "audio/ogg" => "audio/ogg".to_string(),
-        "audio/flac" | "audio/x-flac" => "audio/flac".to_string(),
-        _ => "audio/wav".to_string(),
-    }
-}
-
-fn normalize_transcription_file_name(raw_name: Option<&str>, mime_type: &str) -> String {
-    let mut file_name = raw_name
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(sanitize_filename)
-        .unwrap_or_else(|| "audio".to_string());
-
-    if !file_name.contains('.') {
-        file_name.push('.');
-        file_name.push_str(infer_transcription_extension_from_mime(mime_type));
-    }
-
-    file_name
-}
-
-fn infer_transcription_extension_from_mime(mime_type: &str) -> &'static str {
-    match mime_type {
-        "audio/wav" => "wav",
-        "audio/mp4" | "audio/m4a" => "m4a",
-        "audio/aac" => "aac",
-        "audio/mpeg" => "mp3",
-        "audio/webm" => "webm",
-        "audio/ogg" => "ogg",
-        "audio/flac" => "flac",
-        _ => "wav",
-    }
 }
 
 fn normalize_attachment_kind(kind: Option<&str>, mime_type: Option<&str>) -> &'static str {
@@ -16844,71 +16581,6 @@ mod tests {
     }
 
     #[test]
-    fn transcription_mime_normalization_accepts_known_values_and_falls_back() {
-        assert_eq!(
-            normalize_transcription_mime_type(Some(" audio/MP4 ")),
-            "audio/mp4".to_string()
-        );
-        assert_eq!(
-            normalize_transcription_mime_type(Some("audio/webm;codecs=opus")),
-            "audio/webm".to_string()
-        );
-        assert_eq!(
-            normalize_transcription_mime_type(Some("audio/mpga")),
-            "audio/mpeg".to_string()
-        );
-        assert_eq!(
-            normalize_transcription_mime_type(Some("application/octet-stream")),
-            "audio/wav".to_string()
-        );
-        assert_eq!(
-            normalize_transcription_mime_type(None),
-            "audio/wav".to_string()
-        );
-    }
-
-    #[test]
-    fn voice_transcribe_request_deserializes_legacy_and_extended_shapes() {
-        let legacy: VoiceTranscribeRequest = serde_json::from_value(json!({
-            "dataBase64": "YQ==",
-            "prompt": "hello"
-        }))
-        .expect("deserialize legacy request shape");
-        assert_eq!(legacy.data_base64, "YQ==");
-        assert_eq!(legacy.prompt.as_deref(), Some("hello"));
-        assert!(legacy.file_name.is_none());
-        assert!(legacy.mime_type.is_none());
-
-        let extended: VoiceTranscribeRequest = serde_json::from_value(json!({
-            "dataBase64": "YQ==",
-            "prompt": "hello",
-            "fileName": "audio.m4a",
-            "mimeType": "audio/mp4"
-        }))
-        .expect("deserialize extended request shape");
-        assert_eq!(extended.data_base64, "YQ==");
-        assert_eq!(extended.prompt.as_deref(), Some("hello"));
-        assert_eq!(extended.file_name.as_deref(), Some("audio.m4a"));
-        assert_eq!(extended.mime_type.as_deref(), Some("audio/mp4"));
-    }
-
-    #[test]
-    fn transcription_file_name_normalization_sanitizes_and_sets_extension() {
-        assert_eq!(
-            normalize_transcription_file_name(Some("../voice note"), "audio/mp4"),
-            "voice_note.m4a".to_string()
-        );
-        assert_eq!(
-            normalize_transcription_file_name(None, "audio/wav"),
-            "audio.wav".to_string()
-        );
-        assert_eq!(
-            normalize_transcription_file_name(Some("meeting"), "audio/webm"),
-            "meeting.webm".to_string()
-        );
-    }
-
-    #[test]
     fn disallowed_control_character_detection_flags_shell_metacharacters() {
         assert!(!contains_disallowed_control_chars("git status"));
         assert!(contains_disallowed_control_chars("echo hi; ls"));
@@ -17187,12 +16859,6 @@ mod tests {
         assert_eq!(refresh_auth.access_token, "bridge-cached-token");
         assert_eq!(refresh_auth.account_id, "account-123");
         assert_eq!(refresh_auth.plan_type.as_deref(), Some("team"));
-
-        let (url, token, uses_openai_api) =
-            resolve_transcription_auth().expect("transcription auth");
-        assert_eq!(url, "https://chatgpt.com/backend-api/transcribe");
-        assert_eq!(token, "bridge-cached-token");
-        assert!(!uses_openai_api);
 
         clear_cached_bridge_chatgpt_auth();
         shutdown_test_bridge(&bridge).await;

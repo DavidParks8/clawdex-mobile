@@ -14,9 +14,7 @@ import {
   View,
 } from 'react-native';
 
-import type { VoiceState } from '../hooks/useVoiceRecorder';
 import { resolveComposerBottomSpacing } from './chat-input-layout';
-import { VoiceRecordingWaveform } from './VoiceRecordingWaveform';
 import { useAppTheme, type AppTheme } from '../theme';
 
 interface ChatInputProps {
@@ -34,10 +32,6 @@ interface ChatInputProps {
   showStopButton?: boolean;
   isStopping?: boolean;
   placeholder?: string;
-  onVoiceToggle?: () => void;
-  voiceState?: VoiceState;
-  voiceRecordingDurationMillis?: number;
-  voiceMetering?: number | null;
   safeAreaBottomInset?: number;
   keyboardVisible?: boolean;
   footer?: ReactNode;
@@ -59,10 +53,6 @@ export function ChatInput({
   showStopButton = false,
   isStopping = false,
   placeholder = 'Message Codex...',
-  onVoiceToggle,
-  voiceState = 'idle',
-  voiceRecordingDurationMillis = 0,
-  voiceMetering = null,
   safeAreaBottomInset = 0,
   keyboardVisible = false,
   footer = null,
@@ -95,22 +85,12 @@ export function ChatInput({
     }
   }, [inputHeight, value]);
 
-  const canSend = value.trim().length > 0 && voiceState === 'idle';
+  const canSend = value.trim().length > 0;
   const canStop = Boolean(showStopButton && onStop);
-  const showVoiceButton = Boolean(onVoiceToggle);
   const showSendButton = canSend || (isLoading && !canStop);
   const inputScrollEnabled = inputHeight >= INPUT_TEXT_MAX_HEIGHT;
-  const showVoiceRecordingUi = voiceState === 'recording';
-  const showVoiceTranscribingUi = voiceState === 'transcribing';
-  const showVoiceStatusUi = showVoiceRecordingUi || showVoiceTranscribingUi;
-  /** Cursor-style prominent circular submit control (not mic/stop). */
-  const submitUsesPrimaryChrome =
-    showSendButton &&
-    !canStop &&
-    voiceState !== 'recording' &&
-    voiceState !== 'transcribing';
-  const shouldShowActionButton =
-    canStop || showSendButton || showVoiceButton || voiceState !== 'idle';
+  const submitUsesPrimaryChrome = showSendButton && !canStop;
+  const shouldShowActionButton = canStop || showSendButton;
   const composerBottomSpacing = resolveComposerBottomSpacing(
     Platform.OS,
     safeAreaBottomInset,
@@ -186,118 +166,63 @@ export function ChatInput({
             </Pressable>
           ) : null}
 
-          <View
-            style={[
-              styles.inputWrapper,
-              showVoiceStatusUi && styles.inputWrapperVoiceActive,
-            ]}
-          >
-            {showVoiceStatusUi ? (
-              showVoiceRecordingUi ? (
-                <VoiceRecordingWaveform
-                  durationMillis={voiceRecordingDurationMillis}
-                  metering={voiceMetering}
-                />
-              ) : (
-                <View
-                  accessible
-                  accessibilityLabel="Transcribing recorded audio into text"
-                  style={styles.voiceStatusContent}
-                >
-                  <View style={styles.voiceStatusLabelRow}>
-                    <View style={[styles.voiceStatusDot, styles.voiceStatusDotBusy]} />
-                    <Text style={styles.voiceStatusTitle}>Transcribing audio</Text>
-                  </View>
-                  <Text style={styles.voiceStatusHint}>
-                    Converting your latest recording into text.
-                  </Text>
-                </View>
-              )
-            ) : (
-              <>
-                <Text
-                  pointerEvents="none"
-                  accessibilityElementsHidden
-                  importantForAccessibility="no-hide-descendants"
-                  style={[
-                    styles.inputMeasure,
-                    {
-                      width: inputWidth,
-                      lineHeight: INPUT_TEXT_LINE_HEIGHT,
-                      paddingVertical: INPUT_TEXT_VERTICAL_PADDING,
-                    },
-                  ]}
-                  onTextLayout={(event: NativeSyntheticEvent<TextLayoutEventData>) => {
-                    if (inputWidth <= 0) {
-                      return;
-                    }
-                    const lineCount = Math.max(1, event.nativeEvent.lines.length);
-                    const measuredHeight =
-                      lineCount * INPUT_TEXT_LINE_HEIGHT + INPUT_TEXT_VERTICAL_PADDING * 2;
-                    updateInputHeight(measuredHeight);
-                  }}
-                >
-                  {value.length > 0 ? `${value}\u200b` : ' '}
-                </Text>
-                <TextInput
-                  style={[styles.input, { height: inputHeight }]}
-                  value={value}
-                  onChangeText={onChangeText}
-                  keyboardAppearance={theme.keyboardAppearance}
-                  onLayout={(event) => {
-                    const nextWidth = Math.floor(event.nativeEvent.layout.width);
-                    setInputWidth((previousWidth) =>
-                      previousWidth === nextWidth ? previousWidth : nextWidth
-                    );
-                  }}
-                  onFocus={onFocus}
-                  placeholder={placeholder}
-                  placeholderTextColor={colors.textMuted}
-                  multiline
-                  scrollEnabled={inputScrollEnabled}
-                  onKeyPress={(e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
-                    const keyEvent = e.nativeEvent as TextInputKeyPressEventData & {
-                      shiftKey?: boolean;
-                    };
-                    if (
-                      Platform.OS === 'web' &&
-                      keyEvent.key === 'Enter' &&
-                      !keyEvent.shiftKey
-                    ) {
-                      e.preventDefault();
-                      if (canSend) onSubmit();
-                    }
-                  }}
-                />
-              </>
-            )}
+          <View style={styles.inputWrapper}>
+            <Text
+              pointerEvents="none"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              style={[
+                styles.inputMeasure,
+                {
+                  width: inputWidth,
+                  lineHeight: INPUT_TEXT_LINE_HEIGHT,
+                  paddingVertical: INPUT_TEXT_VERTICAL_PADDING,
+                },
+              ]}
+              onTextLayout={(event: NativeSyntheticEvent<TextLayoutEventData>) => {
+                if (inputWidth <= 0) {
+                  return;
+                }
+                const lineCount = Math.max(1, event.nativeEvent.lines.length);
+                const measuredHeight =
+                  lineCount * INPUT_TEXT_LINE_HEIGHT + INPUT_TEXT_VERTICAL_PADDING * 2;
+                updateInputHeight(measuredHeight);
+              }}
+            >
+              {value.length > 0 ? `${value}\u200b` : ' '}
+            </Text>
+            <TextInput
+              style={[styles.input, { height: inputHeight }]}
+              value={value}
+              onChangeText={onChangeText}
+              keyboardAppearance={theme.keyboardAppearance}
+              onLayout={(event) => {
+                const nextWidth = Math.floor(event.nativeEvent.layout.width);
+                setInputWidth((previousWidth) =>
+                  previousWidth === nextWidth ? previousWidth : nextWidth
+                );
+              }}
+              onFocus={onFocus}
+              placeholder={placeholder}
+              placeholderTextColor={colors.textMuted}
+              multiline
+              scrollEnabled={inputScrollEnabled}
+              onKeyPress={(e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
+                const keyEvent = e.nativeEvent as TextInputKeyPressEventData & {
+                  shiftKey?: boolean;
+                };
+                if (
+                  Platform.OS === 'web' &&
+                  keyEvent.key === 'Enter' &&
+                  !keyEvent.shiftKey
+                ) {
+                  e.preventDefault();
+                  if (canSend) onSubmit();
+                }
+              }}
+            />
             {shouldShowActionButton ? (
               <View style={styles.actionButtons}>
-                {showVoiceButton || voiceState !== 'idle' ? (
-                  voiceState === 'transcribing' ? (
-                    <View style={styles.sendBtn}>
-                      <ActivityIndicator size="small" color={colors.textMuted} />
-                    </View>
-                  ) : voiceState === 'recording' ? (
-                    <Pressable
-                      onPress={onVoiceToggle}
-                      style={[styles.sendBtn, styles.micBtnRecording]}
-                      hitSlop={ACTION_BUTTON_HIT_SLOP}
-                      pressRetentionOffset={ACTION_BUTTON_PRESS_RETENTION_OFFSET}
-                    >
-                      <Ionicons name="mic" size={14} color={colors.error} />
-                    </Pressable>
-                  ) : (
-                    <Pressable
-                      onPress={onVoiceToggle}
-                      style={styles.sendBtn}
-                      hitSlop={ACTION_BUTTON_HIT_SLOP}
-                      pressRetentionOffset={ACTION_BUTTON_PRESS_RETENTION_OFFSET}
-                    >
-                      <Ionicons name="mic-outline" size={14} color={colors.textMuted} />
-                    </Pressable>
-                  )
-                ) : null}
                 {canStop ? (
                   <Pressable
                     onPress={onStop}
@@ -445,10 +370,6 @@ const createStyles = (theme: AppTheme) =>
       minHeight: 44,
       maxHeight: 120,
     },
-    inputWrapperVoiceActive: {
-      minHeight: 58,
-      paddingVertical: theme.spacing.xs + 2,
-    },
     input: {
       ...theme.typography.body,
       flex: 1,
@@ -464,37 +385,6 @@ const createStyles = (theme: AppTheme) =>
       color: theme.colors.textPrimary,
       left: theme.spacing.sm + 2,
       top: theme.spacing.xs,
-    },
-    voiceStatusContent: {
-      flex: 1,
-      gap: 2,
-      justifyContent: 'center',
-      minHeight: 38,
-    },
-    voiceStatusLabelRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: theme.spacing.xs,
-    },
-    voiceStatusDot: {
-      backgroundColor: theme.colors.error,
-      borderRadius: 4,
-      height: 8,
-      width: 8,
-    },
-    voiceStatusDotBusy: {
-      opacity: 0.82,
-    },
-    voiceStatusTitle: {
-      ...theme.typography.body,
-      color: theme.colors.textPrimary,
-      fontSize: 13,
-      fontWeight: '600',
-    },
-    voiceStatusHint: {
-      ...theme.typography.caption,
-      color: theme.colors.textMuted,
-      lineHeight: 16,
     },
     actionButtons: {
       flexDirection: 'row',
@@ -512,10 +402,6 @@ const createStyles = (theme: AppTheme) =>
     },
     sendBtnPrimary: {
       backgroundColor: theme.colors.accent,
-    },
-    micBtnRecording: {
-      borderWidth: 1.5,
-      borderColor: theme.colors.error,
     },
     stopButtonContent: {
       width: 24,

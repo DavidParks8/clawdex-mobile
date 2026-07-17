@@ -15,7 +15,6 @@ Clawdex Mobile can process:
 - Terminal command text and command output returned by your bridge
 - Git repository status, diffs, commit messages, and related metadata
 - File or image attachments you choose to send
-- Voice input audio used for speech-to-text features
 
 ## How Information Is Used
 
@@ -25,7 +24,6 @@ The app uses this information to:
 - display and continue assistant threads
 - execute approved terminal and Git workflows on infrastructure you control
 - upload user-selected files and images to your own workflow
-- support optional voice-to-text input
 
 ## Storage and Retention
 

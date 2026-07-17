@@ -31,9 +31,7 @@
         "backgroundColor": "#000000"
       },
       "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.CAMERA"
       ],
       "googleServicesFile": "./google-services.json",
       "package": "com.mohitpatil973.clawdexmobile"
@@ -61,16 +59,7 @@
         "expo-image-picker",
         {
           "photosPermission": "Clawdex uses your photo library so you can choose an image from your phone and attach it to a chat prompt or workflow sent to your own host bridge.",
-          "cameraPermission": "Clawdex uses the camera to scan bridge pairing QR codes and capture photos you want to attach to a chat.",
-          "microphonePermission": "Clawdex uses the microphone to record a short voice message that is transcribed into your chat input."
-        }
-      ],
-      [
-        "expo-audio",
-        {
-          "microphonePermission": "Clawdex uses the microphone to record a short voice message that is transcribed into your chat input.",
-          "enableBackgroundPlayback": false,
-          "enableBackgroundRecording": false
+          "cameraPermission": "Clawdex uses the camera to scan bridge pairing QR codes and capture photos you want to attach to a chat."
         }
       ],
       "expo-secure-store",

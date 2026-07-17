@@ -13,7 +13,7 @@ This project is for trusted/private networking by default. Keep the bridge on a 
 - Mobile chat for Codex and OpenCode
 - Live run updates over WebSocket
 - Approval and clarification flows in-app
-- Voice-to-text, attachments, terminal, and Git actions
+- Attachments, terminal, and Git actions
 - One mobile shell backed by a private host bridge
 
 ## Quick Start
@@ -120,6 +120,5 @@ Use `npm run setup:wizard -- --no-start` if you only want to write config.
 - Setup + operations: <https://github.com/Mohit-Patil/clawdex-mobile/blob/main/docs/setup-and-operations.md>
 - Troubleshooting: <https://github.com/Mohit-Patil/clawdex-mobile/blob/main/docs/troubleshooting.md>
 - Realtime sync limits/mitigations: <https://github.com/Mohit-Patil/clawdex-mobile/blob/main/docs/realtime-streaming-limitations.md>
-- Voice transcription internals: <https://github.com/Mohit-Patil/clawdex-mobile/blob/main/docs/voice-transcription.md>
 - EAS builds: <https://github.com/Mohit-Patil/clawdex-mobile/blob/main/docs/eas-builds.md>
 - Open-source/license notes: <https://github.com/Mohit-Patil/clawdex-mobile/blob/main/docs/open-source-license-requirements.md>

@@ -662,17 +662,6 @@ export interface RunEvent {
   detail?: string;
 }
 
-export interface VoiceTranscribeRequest {
-  dataBase64: string;
-  prompt?: string;
-  fileName?: string;
-  mimeType?: string;
-}
-
-export interface VoiceTranscribeResponse {
-  text: string;
-}
-
 export interface BridgeCapabilities {
   activeEngine: ChatEngine;
   availableEngines: ChatEngine[];

@@ -65,7 +65,7 @@ The current app is tightly coupled to one normalized bridge protocol:
 
 - `apps/mobile/App.tsx` constructs one `HostBridgeWsClient` and one `HostBridgeApiClient`.
 - `apps/mobile/src/api/ws.ts` expects replayable notifications with `eventId`.
-- `apps/mobile/src/api/client.ts` expects app-server-like methods such as `thread/list`, `thread/read`, `thread/start`, `turn/start`, `turn/interrupt`, `model/list`, `review/start`, and bridge-native methods for approvals, git, terminal, attachments, and voice.
+- `apps/mobile/src/api/client.ts` expects app-server-like methods such as `thread/list`, `thread/read`, `thread/start`, `turn/start`, `turn/interrupt`, `model/list`, `review/start`, and bridge-native methods for approvals, git, terminal, and attachments.
 - `apps/mobile/src/screens/MainScreen.tsx` and `apps/mobile/src/navigation/DrawerContent.tsx` consume the existing `thread/*`, `turn/*`, `item/*`, `bridge/*`, and `codex/event/*` vocabulary.
 
 Because of this, the lowest-risk path is to preserve the mobile contract and add `opencode` behind the bridge.
@@ -353,7 +353,7 @@ Close parity gaps selectively:
 1. Do not change mobile raw event handling to understand `opencode` names.
 2. Do not remove the current Codex app-server adapter while adding `opencode`.
 3. Do not change websocket replay semantics.
-4. Keep bridge-native terminal, git, voice, attachment, and local-image flows unchanged.
+4. Keep bridge-native terminal, git, attachment, and local-image flows unchanged.
 5. Guard non-parity features behind capabilities instead of partial emulation.
 6. Do not use raw engine-local ids directly in mobile once unified browsing is enabled.
 7. Do not allow parent-child thread linkage across engines unless explicitly normalized by the bridge.

@@ -84,7 +84,6 @@ import {
   buildComposerUsageLimitBadges,
 } from '../components/usageLimitBadges';
 import { env } from '../config';
-import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import {
   formatModelOptionDescription,
   formatModelOptionLabel,
@@ -563,15 +562,6 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
     const bumpAgentRuntimeRevision = useCallback(() => {
       setAgentRuntimeRevision((previous) => previous + 1);
     }, []);
-
-    const voiceRecorder = useVoiceRecorder({
-      transcribe: (dataBase64, prompt, options) =>
-        api.transcribeVoice({ dataBase64, prompt, ...options }),
-      composerContext: draft,
-      onTranscript: (text) => setDraft((prev) => (prev ? `${prev} ${text}` : text)),
-      onError: (msg) => setError(msg),
-    });
-    const canUseVoiceInput = Platform.OS !== 'web';
 
     const clearDeferredDisconnectActivity = useCallback(() => {
       if (deferredDisconnectActivityTimeoutRef.current) {
@@ -8518,12 +8508,6 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           onRemoveAttachment={removeComposerAttachment}
           isLoading={isLoading}
           placeholder={selectedChat ? 'Reply...' : 'Message Codex...'}
-          voiceState={canUseVoiceInput ? voiceRecorder.voiceState : 'idle'}
-          voiceRecordingDurationMillis={
-            canUseVoiceInput ? voiceRecorder.recordingDurationMillis : 0
-          }
-          voiceMetering={canUseVoiceInput ? voiceRecorder.recordingMetering : null}
-          onVoiceToggle={canUseVoiceInput ? voiceRecorder.toggleRecording : undefined}
           safeAreaBottomInset={composerSafeAreaBottomInset}
           keyboardVisible={keyboardVisible}
           reserveFooterSpace={activeChatEngine === 'codex'}
