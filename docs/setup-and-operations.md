@@ -291,13 +291,16 @@ Supported mobile slash commands:
 - `/help`
 - `/new`
 - `/model [model-id]`
-- `/plan [on|off|prompt]`
+- `/plan [on|off|prompt]` (uses the OpenCode plan/build agents)
 - `/status`
 - `/rename <new-name>`
 - `/compact` (Codex and OpenCode)
-- `/review`
+- `/review` (Codex only)
 - `/fork`
 - `/diff`
+
+`/goal` is Codex-only. Commands that require an existing chat are hidden until a chat is open.
+`/new` keeps the current chat engine selected.
 
 ### Plan Mode and Clarifications
 

@@ -1647,7 +1647,6 @@ describe('HostBridgeApiClient', () => {
     ws.request
       .mockRejectedValueOnce(new Error('missing field `threadName`'))
       .mockResolvedValueOnce({}) // thread/name/set retry with threadName
-      .mockResolvedValueOnce({}) // explicit threadName attempt
       .mockResolvedValueOnce({
         thread: {
           id: 'thr_rename',
@@ -1671,11 +1670,34 @@ describe('HostBridgeApiClient', () => {
       threadId: 'thr_rename',
       threadName: 'Renamed Chat',
     });
-    expect(ws.request).toHaveBeenNthCalledWith(3, 'thread/name/set', {
-      threadId: 'thr_rename',
-      threadName: 'Renamed Chat',
-    });
+    expect(ws.request).toHaveBeenCalledTimes(3);
     expect(renamed.title).toBe('Renamed Chat');
+  });
+
+  it('renameChat() does not repeat a successful name update', async () => {
+    const ws = createWsMock();
+    ws.request
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        thread: {
+          id: 'opencode:session-1',
+          preview: '',
+          createdAt: 1700000000,
+          updatedAt: 1700000002,
+          status: { type: 'idle' },
+          name: 'Renamed Chat',
+          turns: [],
+        },
+      });
+
+    const client = new HostBridgeApiClient({ ws: ws as unknown as HostBridgeWsClient });
+    await client.renameChat('opencode:session-1', 'Renamed Chat');
+
+    expect(ws.request).toHaveBeenCalledTimes(2);
+    expect(ws.request).toHaveBeenNthCalledWith(1, 'thread/name/set', {
+      threadId: 'opencode:session-1',
+      name: 'Renamed Chat',
+    });
   });
 
   it('sendChatMessage() forwards selected model/effort to turn/start', async () => {

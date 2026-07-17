@@ -218,6 +218,7 @@ For `opencode`, map current outward methods approximately as follows:
 - `thread/fork` -> `POST /session/:id/fork`
 - `thread/compact/start` -> `POST /session/:id/summarize`
 - `turn/start` -> `POST /session/:id/prompt_async`
+- plan/default collaboration modes -> `prompt_async` agent `plan`/`build`
 - `turn/interrupt` -> `POST /session/:id/abort`
 - `bridge/approvals/list` -> `GET /permission`
 - `bridge/approvals/resolve` -> `POST /permission/:requestID/reply`

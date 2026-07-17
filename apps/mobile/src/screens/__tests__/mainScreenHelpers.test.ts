@@ -2,6 +2,8 @@ import {
   buildOptimisticGoalBridgeUiSurface,
   extractCodexFailureMessage,
   formatGitCloneFailureMessage,
+  findSlashCommandDefinition,
+  isSlashCommandAvailable,
   mergeChatEngines,
   parseChatBridgeUiSurfaces,
   parseGoalSlashObjective,
@@ -9,6 +11,30 @@ import {
 } from '../mainScreenHelpers';
 
 describe('mainScreenHelpers', () => {
+  const availability = {
+    hasOpenChat: true,
+    supportsCompact: true,
+    supportsGoal: false,
+    supportsPlanMode: true,
+    supportsReview: false,
+  };
+
+  it('exposes only executable slash commands for the active engine and chat state', () => {
+    const compact = findSlashCommandDefinition('compact');
+    const goal = findSlashCommandDefinition('goal');
+    const permissions = findSlashCommandDefinition('permissions');
+    expect(compact && isSlashCommandAvailable(compact, availability)).toBe(true);
+    expect(goal && isSlashCommandAvailable(goal, availability)).toBe(false);
+    expect(permissions && isSlashCommandAvailable(permissions, availability)).toBe(false);
+    expect(
+      compact &&
+        isSlashCommandAvailable(compact, {
+          ...availability,
+          hasOpenChat: false,
+        })
+    ).toBe(false);
+  });
+
   it('does not invent Codex when no harness is reported', () => {
     expect(mergeChatEngines([])).toEqual([]);
     expect(mergeChatEngines(['opencode'], 'opencode')).toEqual(['opencode']);

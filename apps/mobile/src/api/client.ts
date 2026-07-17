@@ -1128,10 +1128,6 @@ export class HostBridgeApiClient {
       threadId: id,
       name: trimmedName,
     });
-    await this.trySetThreadName(id, {
-      threadId: id,
-      threadName: trimmedName,
-    });
 
     this.renamedTitles.set(id, trimmedName);
     const updated = await this.getChat(id);

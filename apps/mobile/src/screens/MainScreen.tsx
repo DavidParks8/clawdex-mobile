@@ -15,6 +15,7 @@ import {
 import {
   AppState,
   ActivityIndicator,
+  Alert,
   Dimensions,
   type FlatList,
   Keyboard,
@@ -221,6 +222,7 @@ import {
   parseSlashQuery,
   findSlashCommandDefinition,
   filterSlashCommands,
+  isSlashCommandAvailable,
   formatAgentThreadOptionTitle,
   iconForAgentThread,
   stripMarkdownInline,
@@ -773,14 +775,22 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         ? bridgeCapabilities.supports
         : null);
     const supportsFastMode = activeEngineSupports?.fastMode === true;
-    const supportsReview = activeEngineSupports?.reviewStart === true;
+    const supportsReview =
+      activeEngineSupports?.reviewStart ?? activeChatEngine === 'codex';
     const supportsCompact =
       activeEngineSupports?.compactStart ?? activeChatEngine === 'codex';
-    const activeSlashCommands = SLASH_COMMANDS.filter(
-      (command) =>
-        (activeChatEngine === 'codex' || command.mobileSupported) &&
-        (command.name !== 'review' || supportsReview) &&
-        (command.name !== 'compact' || supportsCompact)
+    const supportsGoal = activeEngineSupports?.goalSlash ?? activeChatEngine === 'codex';
+    const supportsPlanMode =
+      activeEngineSupports?.planMode ?? activeChatEngine !== 'opencode';
+    const slashCommandAvailability = {
+      hasOpenChat: Boolean(selectedChatId),
+      supportsCompact,
+      supportsGoal,
+      supportsPlanMode,
+      supportsReview,
+    };
+    const activeSlashCommands = SLASH_COMMANDS.filter((command) =>
+      isSlashCommandAvailable(command, slashCommandAvailability)
     );
     const modelOptions = modelOptionsByEngine[activeChatEngine] ?? EMPTY_MODEL_OPTIONS;
     const pendingEngineDefaults = defaultEngineSettings?.[preferredNewChatEngine] ?? null;
@@ -2574,16 +2584,17 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       }
     }, [activeModel, selectedEffort, selectedModelId]);
 
-    const resetComposerState = useCallback(() => {
+    const resetComposerState = useCallback((requestedEngine?: ChatEngine) => {
+      const nextEngine = resolveChatEngine(requestedEngine ?? persistedDefaultChatEngine);
       clearExternalStatusFullSync();
       loadChatRequestRef.current += 1;
       setSelectedChat(null);
       setSelectedChatId(null);
-      setPendingChatEngine(persistedDefaultChatEngine);
-      const rememberedSettings = defaultEngineSettings?.[persistedDefaultChatEngine];
+      setPendingChatEngine(nextEngine);
+      const rememberedSettings = defaultEngineSettings?.[nextEngine];
       setSelectedCollaborationMode(
         rememberedSettings?.collaborationMode === 'plan' ||
-          (rememberedSettings?.collaborationMode === 'ask' && persistedDefaultChatEngine === 'cursor')
+          (rememberedSettings?.collaborationMode === 'ask' && nextEngine === 'cursor')
           ? rememberedSettings.collaborationMode
           : 'default'
       );
@@ -2644,9 +2655,9 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       persistedDefaultChatEngine,
     ]);
 
-    const startNewChat = useCallback(() => {
+    const startNewChat = useCallback((requestedEngine?: ChatEngine) => {
       // New chat should land on compose/home so user can pick workspace first.
-      resetComposerState();
+      resetComposerState(requestedEngine);
     }, [resetComposerState]);
 
     const refreshWorkspaceRoots = useCallback(async () => {
@@ -4126,14 +4137,14 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
     ]);
 
     const appendLocalAssistantMessage = useCallback(
-      (content: string) => {
+      (content: string, title = 'Command result') => {
         const normalized = content.trim();
         if (!normalized) {
           return;
         }
 
         if (!selectedChatId) {
-          setError(normalized);
+          Alert.alert(title, normalized);
           return;
         }
 
@@ -4522,8 +4533,31 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         const name = commandDef?.name ?? rawName;
         const argText = args.trim();
 
-        if (!commandDef || !commandDef.mobileSupported) {
+        if (!commandDef) {
           return false;
+        }
+
+        if (!commandDef.mobileSupported) {
+          setError(commandDef.availabilityNote ?? `/${name} is not supported on mobile.`);
+          return true;
+        }
+
+        if (commandDef.requiresOpenChat && !selectedChatId) {
+          setError(`/${name} requires an open chat`);
+          return true;
+        }
+
+        if (
+          !isSlashCommandAvailable(commandDef, {
+            hasOpenChat: Boolean(selectedChatId),
+            supportsCompact,
+            supportsGoal,
+            supportsPlanMode,
+            supportsReview,
+          })
+        ) {
+          setError(`/${name} is not supported for ${activeChatEngineLabel} chats.`);
+          return true;
         }
 
         if (name === 'agent') {
@@ -4537,12 +4571,15 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             const scope = command.mobileSupported ? 'mobile' : 'CLI only';
             return `/${command.name}${suffix} — ${command.summary} (${scope})`;
           });
-          appendLocalAssistantMessage(`Supported slash commands:\n${lines.join('\n')}`);
+          appendLocalAssistantMessage(
+            `Supported slash commands:\n${lines.join('\n')}`,
+            'Slash commands'
+          );
           return true;
         }
 
         if (name === 'new') {
-          startNewChat();
+          startNewChat(activeChatEngine);
           return true;
         }
 
@@ -4858,7 +4895,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             lines.push(`Chat workspace: ${selectedChat.cwd ?? 'Not set'}`);
             lines.push(`Chat status: ${selectedChat.status}`);
           }
-          appendLocalAssistantMessage(lines.join('\n'));
+          appendLocalAssistantMessage(lines.join('\n'), 'Session status');
           return true;
         }
 
@@ -5052,6 +5089,8 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         fastModeEnabled,
         supportsFastMode,
         supportsCompact,
+        supportsGoal,
+        supportsPlanMode,
         supportsReview,
         activeChatEngineLabel,
         mergeChatWithPendingOptimisticMessages,

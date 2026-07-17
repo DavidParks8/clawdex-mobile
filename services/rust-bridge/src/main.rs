@@ -1250,6 +1250,8 @@ struct BridgeCapabilities {
 struct BridgeCapabilitySupport {
     review_start: bool,
     compact_start: bool,
+    goal_slash: bool,
+    plan_mode: bool,
     turn_steer: bool,
     command_output_delta: bool,
     fast_mode: bool,
@@ -1900,6 +1902,8 @@ impl RuntimeBackend {
             BridgeRuntimeEngine::Codex => BridgeCapabilitySupport {
                 review_start: true,
                 compact_start: true,
+                goal_slash: true,
+                plan_mode: true,
                 turn_steer: true,
                 command_output_delta: true,
                 fast_mode: true,
@@ -1912,6 +1916,8 @@ impl RuntimeBackend {
             BridgeRuntimeEngine::Opencode => BridgeCapabilitySupport {
                 review_start: false,
                 compact_start: true,
+                goal_slash: false,
+                plan_mode: true,
                 turn_steer: false,
                 command_output_delta: false,
                 fast_mode: false,
@@ -1924,6 +1930,8 @@ impl RuntimeBackend {
             BridgeRuntimeEngine::Cursor => BridgeCapabilitySupport {
                 review_start: false,
                 compact_start: false,
+                goal_slash: false,
+                plan_mode: true,
                 turn_steer: false,
                 command_output_delta: false,
                 fast_mode: false,
@@ -5563,6 +5571,11 @@ impl OpencodeBackend {
         let mut body = json!({
             "parts": parts,
         });
+        if let Some(agent) =
+            opencode_agent_for_collaboration_mode(params_object.get("collaborationMode"))
+        {
+            body["agent"] = Value::String(agent.to_string());
+        }
         let requested_effort = read_string(params_object.get("effort"));
         let mut configured_providers: Option<Value> = None;
         let config = if requested_effort.is_some() {
@@ -12732,6 +12745,19 @@ fn opencode_status_is_active(status: Option<&str>) -> bool {
     matches!(status, Some("busy" | "retry"))
 }
 
+fn opencode_agent_for_collaboration_mode(value: Option<&Value>) -> Option<&'static str> {
+    let mode = value.and_then(|value| {
+        value
+            .as_str()
+            .or_else(|| value.as_object()?.get("mode")?.as_str())
+    })?;
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "plan" => Some("plan"),
+        "default" => Some("build"),
+        _ => None,
+    }
+}
+
 fn opencode_permission_kind(permission: Option<&str>) -> &'static str {
     let normalized = permission.unwrap_or_default().trim().to_ascii_lowercase();
     if normalized.contains("write")
@@ -15783,10 +15809,14 @@ mod tests {
         assert!(capabilities.unified_chat_list);
         assert!(capabilities.supports.review_start);
         assert!(capabilities.supports.compact_start);
+        assert!(capabilities.supports.goal_slash);
+        assert!(capabilities.supports.plan_mode);
         assert!(capabilities.supports.fast_mode);
         assert!(capabilities.supports.generic_ui_surface);
         assert!(!capabilities.supports_by_engine[&BridgeRuntimeEngine::Opencode].fast_mode);
         assert!(capabilities.supports_by_engine[&BridgeRuntimeEngine::Opencode].compact_start);
+        assert!(!capabilities.supports_by_engine[&BridgeRuntimeEngine::Opencode].goal_slash);
+        assert!(capabilities.supports_by_engine[&BridgeRuntimeEngine::Opencode].plan_mode);
         assert!(!capabilities.supports_by_engine[&BridgeRuntimeEngine::Cursor].compact_start);
 
         shutdown_test_backend(&state.backend).await;
@@ -15803,6 +15833,26 @@ mod tests {
                 BridgeRuntimeEngine::Cursor,
                 BridgeRuntimeEngine::Codex
             ]
+        );
+    }
+
+    #[test]
+    fn opencode_collaboration_modes_select_builtin_agents() {
+        assert_eq!(
+            opencode_agent_for_collaboration_mode(Some(&json!({ "mode": "plan" }))),
+            Some("plan")
+        );
+        assert_eq!(
+            opencode_agent_for_collaboration_mode(Some(&json!({ "mode": "default" }))),
+            Some("build")
+        );
+        assert_eq!(
+            opencode_agent_for_collaboration_mode(Some(&json!("plan"))),
+            Some("plan")
+        );
+        assert_eq!(
+            opencode_agent_for_collaboration_mode(Some(&json!({ "mode": "ask" }))),
+            None
         );
     }
 
@@ -15971,6 +16021,75 @@ mod tests {
             .await
             .expect("compact request should succeed");
         assert_eq!(result, json!({}));
+
+        shutdown_test_opencode_backend(&backend).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn opencode_plan_turn_sends_plan_agent_to_prompt_async() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock opencode server");
+        let address = listener.local_addr().expect("mock server address");
+        let prompted = Arc::new(AtomicBool::new(false));
+        let prompted_for_messages = prompted.clone();
+        let prompted_for_request = prompted.clone();
+        let app = Router::new()
+            .route(
+                "/session/session-1/message",
+                get(move || {
+                    let prompted = prompted_for_messages.clone();
+                    async move {
+                        Json(if prompted.load(Ordering::SeqCst) {
+                            json!([{ "info": { "id": "message-plan", "role": "user" } }])
+                        } else {
+                            json!([])
+                        })
+                    }
+                }),
+            )
+            .route(
+                "/session/session-1/prompt_async",
+                axum::routing::post(move |Json(body): Json<Value>| {
+                    let prompted = prompted_for_request.clone();
+                    async move {
+                        assert_eq!(body["agent"], "plan");
+                        assert_eq!(body["model"]["providerID"], "anthropic");
+                        assert_eq!(body["model"]["modelID"], "claude-sonnet");
+                        prompted.store(true, Ordering::SeqCst);
+                        StatusCode::NO_CONTENT
+                    }
+                }),
+            );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve mock opencode");
+        });
+        let hub = Arc::new(ClientHub::new());
+        let backend = build_test_opencode_backend_for_url(
+            hub,
+            Url::parse(&format!("http://{address}/")).expect("mock base url"),
+        )
+        .await;
+
+        let result = backend
+            .dispatch_request(
+                "turn/start",
+                Some(json!({
+                    "threadId": "session-1",
+                    "input": [{ "type": "text", "text": "Plan this change" }],
+                    "model": "anthropic/claude-sonnet",
+                    "collaborationMode": { "mode": "plan" },
+                })),
+            )
+            .await
+            .expect("plan turn should succeed");
+        assert_eq!(
+            read_string(result.get("turn").and_then(|turn| turn.get("id"))).as_deref(),
+            Some("message-plan")
+        );
 
         shutdown_test_opencode_backend(&backend).await;
         server.abort();

@@ -136,8 +136,17 @@ export interface SlashCommandDefinition {
   summary: string;
   argsHint?: string;
   mobileSupported: boolean;
+  requiresOpenChat?: boolean;
   aliases?: string[];
   availabilityNote?: string;
+}
+
+export interface SlashCommandAvailability {
+  hasOpenChat: boolean;
+  supportsCompact: boolean;
+  supportsGoal: boolean;
+  supportsPlanMode: boolean;
+  supportsReview: boolean;
 }
 
 export const MAX_ACTIVE_COMMANDS = 16;
@@ -265,6 +274,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
     summary: 'Switch the active sub-agent thread',
     argsHint: '[thread]',
     mobileSupported: true,
+    requiresOpenChat: true,
   },
   {
     name: 'apps',
@@ -276,11 +286,13 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
     name: 'compact',
     summary: 'Compact current thread history',
     mobileSupported: true,
+    requiresOpenChat: true,
   },
   {
     name: 'diff',
     summary: 'Open Git view for current chat',
     mobileSupported: true,
+    requiresOpenChat: true,
   },
   {
     name: 'exit',
@@ -360,6 +372,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
     name: 'fork',
     summary: 'Fork current conversation into a new chat',
     mobileSupported: true,
+    requiresOpenChat: true,
   },
   {
     name: 'resume',
@@ -383,6 +396,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
     name: 'review',
     summary: 'Run review on uncommitted changes',
     mobileSupported: true,
+    requiresOpenChat: true,
   },
   {
     name: 'status',
@@ -418,6 +432,7 @@ export const SLASH_COMMANDS: SlashCommandDefinition[] = [
     summary: 'Rename current chat',
     argsHint: '<new-name>',
     mobileSupported: true,
+    requiresOpenChat: true,
   },
 ];
 
@@ -2194,6 +2209,30 @@ export function filterSlashCommands(
       command.aliases?.some((alias) => alias.toLowerCase().includes(normalized)) ?? false;
     return byName || bySummary || byAlias;
   });
+}
+
+export function isSlashCommandAvailable(
+  command: SlashCommandDefinition,
+  availability: SlashCommandAvailability
+): boolean {
+  if (!command.mobileSupported || (command.requiresOpenChat && !availability.hasOpenChat)) {
+    return false;
+  }
+
+  if (command.name === 'compact') {
+    return availability.supportsCompact;
+  }
+  if (command.name === 'goal') {
+    return availability.supportsGoal;
+  }
+  if (command.name === 'plan') {
+    return availability.supportsPlanMode;
+  }
+  if (command.name === 'review') {
+    return availability.supportsReview;
+  }
+
+  return true;
 }
 
 export function dedupeSlashCommandsByName(
