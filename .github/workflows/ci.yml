@@ -51,7 +51,7 @@ jobs:
           cache-dependency-path: package-lock.json
           package-manager-cache: false
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.97.1
       - name: Install dependencies
         run: npm ci
       - name: Validate RPC contract
@@ -105,9 +105,9 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
-          components: rustfmt
+          components: clippy,rustfmt
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -119,13 +119,17 @@ jobs:
         working-directory: services/rust-bridge
         run: cargo fmt --check
 
+      - name: Rust clippy
+        working-directory: services/rust-bridge
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
       - name: Rust check
         working-directory: services/rust-bridge
         run: cargo check --locked
 
       - name: Rust test
         working-directory: services/rust-bridge
-        run: cargo test --locked
+        run: cargo test --locked -- --test-threads=1
 
       - name: Boundary integration suite
         run: npm run test:boundary

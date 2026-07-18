@@ -477,20 +477,21 @@ impl BridgeQueueService {
         let approvals = self.backend.list_pending_approvals().await;
         let user_inputs = self.backend.list_pending_user_inputs().await;
 
-        let mut runtime = BridgeThreadQueueRuntime::default();
-        runtime.active_turn_id = read_active_turn_id_from_thread(thread);
-        runtime.thread_running = thread_has_running_turn(thread);
-        runtime.pending_approval_ids = approvals
-            .into_iter()
-            .filter(|entry| entry.thread_id == thread_id)
-            .map(|entry| entry.id)
-            .collect();
-        runtime.pending_user_input_ids = user_inputs
-            .into_iter()
-            .filter(|entry| entry.thread_id == thread_id)
-            .map(|entry| entry.id)
-            .collect();
-        Ok(runtime)
+        Ok(BridgeThreadQueueRuntime {
+            active_turn_id: read_active_turn_id_from_thread(thread),
+            thread_running: thread_has_running_turn(thread),
+            pending_approval_ids: approvals
+                .into_iter()
+                .filter(|entry| entry.thread_id == thread_id)
+                .map(|entry| entry.id)
+                .collect(),
+            pending_user_input_ids: user_inputs
+                .into_iter()
+                .filter(|entry| entry.thread_id == thread_id)
+                .map(|entry| entry.id)
+                .collect(),
+            ..BridgeThreadQueueRuntime::default()
+        })
     }
 
     pub(super) async fn reconcile_all_threads(&self) {

@@ -2,6 +2,10 @@
 name = "codex-rust-bridge"
 version = "5.2.3"
 edition = "2021"
+rust-version = "1.97.1"
+license = "MIT"
+repository = "https://github.com/Mohit-Patil/clawdex-mobile"
+publish = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }

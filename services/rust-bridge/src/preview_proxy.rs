@@ -1147,14 +1147,11 @@ pub(super) fn should_rewrite_preview_html_response(headers: &HeaderMap) -> bool 
         return false;
     }
 
-    match headers
+    !matches!(headers
         .get(CONTENT_ENCODING)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.trim().to_ascii_lowercase())
-    {
-        Some(value) if !value.is_empty() && value != "identity" => false,
-        _ => true,
-    }
+        , Some(value) if !value.is_empty() && value != "identity")
 }
 
 pub(super) fn rewrite_preview_html_document(

@@ -240,8 +240,7 @@ pub(crate) fn build_attachment_file_name(
 pub(crate) fn sanitize_filename(value: &str) -> String {
     let basename = value
         .split(['/', '\\'])
-        .filter(|segment| !segment.trim().is_empty())
-        .next_back()
+        .rfind(|segment| !segment.trim().is_empty())
         .unwrap_or("attachment");
     let mut cleaned = basename
         .chars()
@@ -330,6 +329,8 @@ mod tests {
     use std::{fs, path::PathBuf};
     use uuid::Uuid;
 
+    type MultipartPart<'a> = (&'a str, Option<&'a str>, Option<&'a str>, &'a [u8]);
+
     struct TestDir(PathBuf);
 
     impl TestDir {
@@ -357,10 +358,7 @@ mod tests {
         Multipart::from_request(request, &()).await.unwrap()
     }
 
-    fn multipart_body(
-        boundary: &str,
-        parts: &[(&str, Option<&str>, Option<&str>, &[u8])],
-    ) -> Vec<u8> {
+    fn multipart_body(boundary: &str, parts: &[MultipartPart<'_>]) -> Vec<u8> {
         let mut body = Vec::new();
         for (name, file_name, content_type, value) in parts {
             body.extend_from_slice(

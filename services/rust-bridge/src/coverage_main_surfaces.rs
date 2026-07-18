@@ -545,7 +545,9 @@ async fn local_image_route_serves_files_and_reports_path_media_and_size_errors()
     let _ = std_fs::remove_file(outside);
 }
 
-fn multipart_body(boundary: &str, fields: &[(&str, Option<&str>, Option<&str>, &[u8])]) -> Vec<u8> {
+type MultipartField<'a> = (&'a str, Option<&'a str>, Option<&'a str>, &'a [u8]);
+
+fn multipart_body(boundary: &str, fields: &[MultipartField<'_>]) -> Vec<u8> {
     let mut body = Vec::new();
     for (name, file_name, content_type, value) in fields {
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
@@ -1278,6 +1280,7 @@ async fn preview_proxy_covers_shells_chunk_limits_request_limits_and_stream_fail
 }
 
 #[tokio::test]
+#[allow(clippy::result_large_err)]
 async fn preview_websocket_proxy_forwards_protocol_text_binary_ping_and_close() {
     let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream_address = upstream_listener.local_addr().unwrap();
@@ -2084,16 +2087,16 @@ async fn thread_list_stream_helpers_cover_defaults_clamps_replacement_and_cleanu
         .lock()
         .await
         .insert("7:stopped".to_string(), stopped.clone());
-    run_thread_list_stream(
-        context.state.clone(),
-        7,
-        "stopped".to_string(),
-        "7:stopped".to_string(),
-        false,
-        vec![1],
-        0,
-        stopped,
-    )
+    run_thread_list_stream(ThreadListStreamTask {
+        state: context.state.clone(),
+        client_id: 7,
+        stream_id: "stopped".to_string(),
+        stream_key: "7:stopped".to_string(),
+        include_sub_agents: false,
+        limits: vec![1],
+        delay_ms: 0,
+        cancellation: stopped,
+    })
     .await;
     assert!(!context
         .state
@@ -2110,16 +2113,16 @@ async fn thread_list_stream_helpers_cover_defaults_clamps_replacement_and_cleanu
         .lock()
         .await
         .insert("8:stale".to_string(), replacement.clone());
-    run_thread_list_stream(
-        context.state.clone(),
-        8,
-        "stale".to_string(),
-        "8:stale".to_string(),
-        false,
-        vec![1],
-        0,
-        stale,
-    )
+    run_thread_list_stream(ThreadListStreamTask {
+        state: context.state.clone(),
+        client_id: 8,
+        stream_id: "stale".to_string(),
+        stream_key: "8:stale".to_string(),
+        include_sub_agents: false,
+        limits: vec![1],
+        delay_ms: 0,
+        cancellation: stale,
+    })
     .await;
     assert!(Arc::ptr_eq(
         context

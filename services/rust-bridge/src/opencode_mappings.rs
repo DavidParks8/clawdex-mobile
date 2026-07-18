@@ -716,8 +716,7 @@ pub(super) fn opencode_messages_to_turns(
         };
 
         if role == "user" {
-            let turn_id =
-                read_string(info.get("id")).unwrap_or_else(|| generate_opencode_local_id());
+            let turn_id = read_string(info.get("id")).unwrap_or_else(generate_opencode_local_id);
             let user_content = opencode_user_content_items(message_object);
             let mut turn = json!({
                 "id": turn_id.clone(),
@@ -768,7 +767,7 @@ pub(super) fn opencode_messages_to_turns(
                 .filter(|text| !text.trim().is_empty())
             {
                 let item_id =
-                    read_string(info.get("id")).unwrap_or_else(|| generate_opencode_local_id());
+                    read_string(info.get("id")).unwrap_or_else(generate_opencode_local_id);
                 if let Some(items) = turns[index].get_mut("items").and_then(Value::as_array_mut) {
                     items.push(json!({
                         "type": "agentMessage",

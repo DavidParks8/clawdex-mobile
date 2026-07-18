@@ -2494,9 +2494,7 @@ async fn rollout_tracking_covers_meta_state_polling_dedup_and_missing_files() {
     let path = root.join("rollout-active.jsonl");
     tokio::fs::write(
         &path,
-        concat!(
-            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"initial\",\"originator\":\"codex_cli_rs\"}}\n"
-        ),
+        "{\"type\":\"session_meta\",\"payload\":{\"id\":\"initial\",\"originator\":\"codex_cli_rs\"}}\n",
     )
     .await
     .unwrap();
@@ -2523,31 +2521,29 @@ async fn rollout_tracking_covers_meta_state_polling_dedup_and_missing_files() {
         r#"{"type":"event_msg"}"#,
         r#"{"type":"event_msg","payload":1}"#,
     ] {
-        assert!(tracked.to_notification(malformed).is_none(), "{malformed}");
+        assert!(tracked.process_line(malformed).is_none(), "{malformed}");
     }
     tracked.include_for_live_sync = false;
     assert!(tracked
-        .to_notification(r#"{"type":"event_msg","payload":{"type":"token_count"}}"#)
+        .process_line(r#"{"type":"event_msg","payload":{"type":"token_count"}}"#)
         .is_none());
     assert!(tracked
-        .to_notification(
-            r#"{"type":"session_meta","payload":{"id":"blocked","originator":"other"}}"#
-        )
+        .process_line(r#"{"type":"session_meta","payload":{"id":"blocked","originator":"other"}}"#)
         .is_none());
     assert!(!tracked.include_for_live_sync);
     assert!(tracked
-        .to_notification(
+        .process_line(
             r#"{"type":"session_meta","payload":{"threadId":"live","originator":"clawdex"}}"#
         )
         .is_none());
     assert!(tracked.include_for_live_sync);
     assert_eq!(tracked.thread_id.as_deref(), Some("live"));
     assert!(tracked
-        .to_notification(r#"{"type":"unknown","payload":{}}"#)
+        .process_line(r#"{"type":"unknown","payload":{}}"#)
         .is_none());
     assert_eq!(
         tracked
-            .to_notification(
+            .process_line(
                 r#"{"type":"event_msg","timestamp":"stamp","payload":{"type":"token_count","thread_id":"updated"}}"#
             )
             .unwrap()
@@ -2557,7 +2553,7 @@ async fn rollout_tracking_covers_meta_state_polling_dedup_and_missing_files() {
     assert_eq!(tracked.thread_id.as_deref(), Some("updated"));
     assert_eq!(
         tracked
-            .to_notification(
+            .process_line(
                 r#"{"type":"response_item","payload":{"type":"function_call","name":"mcp__server__tool","arguments":{}}}"#
             )
             .unwrap()
@@ -2605,10 +2601,9 @@ async fn rollout_tracking_covers_meta_state_polling_dedup_and_missing_files() {
     );
 
     let tail_path = root.join("rollout-tail.jsonl");
-    let mut tail_contents = concat!(
+    let mut tail_contents =
         "{\"type\":\"session_meta\",\"payload\":{\"id\":\"tail\",\"originator\":\"codex\"}}\n"
-    )
-    .to_string();
+            .to_string();
     tail_contents.push_str(&"x".repeat(ROLLOUT_LIVE_SYNC_INITIAL_TAIL_BYTES as usize + 1));
     tokio::fs::write(&tail_path, tail_contents).await.unwrap();
     let mut tail = RolloutTrackedFile::new(tail_path.clone()).await.unwrap();

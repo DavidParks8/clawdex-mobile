@@ -202,11 +202,7 @@ impl PushService {
             let mut replies = self.recent_replies.write().await;
             replies.remove(thread_id)?
         };
-        let last_line = raw
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .next_back()?;
+        let last_line = raw.lines().map(str::trim).rfind(|line| !line.is_empty())?;
         let collapsed = last_line.split_whitespace().collect::<Vec<_>>().join(" ");
         if collapsed.is_empty() {
             return None;

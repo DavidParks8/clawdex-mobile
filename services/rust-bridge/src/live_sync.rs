@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -62,7 +63,7 @@ pub(crate) async fn discover_recent_rollout_files(
         }
     }
 
-    matches.sort_by(|left, right| right.1.cmp(&left.1));
+    matches.sort_by_key(|entry| Reverse(entry.1));
     matches.truncate(ROLLOUT_LIVE_SYNC_MAX_TRACKED_FILES);
     Ok(matches.into_iter().map(|(path, _)| path).collect())
 }
@@ -80,7 +81,7 @@ pub(crate) fn hash_rollout_line(line: &str) -> u64 {
 }
 
 pub(crate) fn should_run_rollout_discovery_tick(tick: u64, interval_ticks: u64) -> bool {
-    interval_ticks <= 1 || tick == 1 || tick % interval_ticks == 0
+    interval_ticks <= 1 || tick == 1 || tick.is_multiple_of(interval_ticks)
 }
 
 pub(crate) fn rollout_originator_allowed(originator: Option<&str>) -> bool {

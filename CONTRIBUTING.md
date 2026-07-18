@@ -41,6 +41,10 @@ npm run typecheck
 npm run test
 ```
 
+The repository pins Rust in `rust-toolchain.toml`. Rust linting includes formatting plus
+warning-clean Clippy checks across production and test targets; use the pinned toolchain instead of
+an arbitrary local `stable` release.
+
 ## Contribution Guidelines
 
 - Keep changes scoped to the problem being solved.

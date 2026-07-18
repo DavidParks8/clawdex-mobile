@@ -222,7 +222,7 @@ impl BrowserPreviewService {
         let candidate_ports =
             discover_loopback_listening_ports(&[self.bridge_port, self.preview_port]).await;
         let http = self.http.clone();
-        let suggestions = stream::iter(candidate_ports.into_iter())
+        let suggestions = stream::iter(candidate_ports)
             .map(|port| {
                 let http = http.clone();
                 async move {
@@ -597,7 +597,7 @@ mod tests {
             session.session_id
         );
         assert!(service.close_session(7, &session.session_id).await);
-        assert!(service.close_session(7, &session.session_id).await == false);
+        assert!(!service.close_session(7, &session.session_id).await);
     }
 
     #[tokio::test]

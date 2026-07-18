@@ -1677,11 +1677,11 @@ async fn rollout_tracking_covers_metadata_polling_dedup_partial_and_removed_file
         "{\"type\":\"event_msg\"}",
         "{\"type\":\"event_msg\",\"payload\":{}}",
     ] {
-        assert!(tracked.to_notification(malformed).is_none());
+        assert!(tracked.process_line(malformed).is_none());
     }
     tracked.include_for_live_sync = false;
     assert!(tracked
-        .to_notification(
+        .process_line(
             &json!({ "type": "event_msg", "payload": { "type": "task_complete" } }).to_string(),
         )
         .is_none());

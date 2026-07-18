@@ -121,7 +121,7 @@ impl RolloutTrackedFile {
                 continue;
             }
 
-            if let Some((method, params)) = self.to_notification(trimmed) {
+            if let Some((method, params)) = self.process_line(trimmed) {
                 if let Some(status_payload) =
                     build_rollout_thread_status_notification(&method, &params)
                 {
@@ -152,7 +152,7 @@ impl RolloutTrackedFile {
         true
     }
 
-    pub(super) fn to_notification(&mut self, line: &str) -> Option<(String, Value)> {
+    pub(super) fn process_line(&mut self, line: &str) -> Option<(String, Value)> {
         let parsed = serde_json::from_str::<Value>(line).ok()?;
         let parsed_object = parsed.as_object()?;
         let record_type = read_string(parsed_object.get("type"))?;

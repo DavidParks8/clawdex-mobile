@@ -296,7 +296,7 @@ pub(super) fn route_engine_from_params(params: Option<&Value>) -> Option<BridgeR
             .or_else(|| params.get("parent_thread_id")),
     );
     if let Some(thread_id) = thread_id.as_deref() {
-        if let Some((engine, _)) = parse_engine_qualified_id(&thread_id) {
+        if let Some((engine, _)) = parse_engine_qualified_id(thread_id) {
             return Some(engine);
         }
     }

@@ -1084,16 +1084,16 @@ pub(super) async fn start_thread_list_stream(
     let stream_state = state.clone();
     let stream_id_for_task = stream_id.clone();
     tokio::spawn(async move {
-        run_thread_list_stream(
-            stream_state,
+        run_thread_list_stream(ThreadListStreamTask {
+            state: stream_state,
             client_id,
-            stream_id_for_task,
+            stream_id: stream_id_for_task,
             stream_key,
             include_sub_agents,
             limits,
             delay_ms,
             cancellation,
-        )
+        })
         .await;
     });
 
@@ -1133,16 +1133,28 @@ pub(super) async fn cancel_thread_list_stream(
     }))
 }
 
-pub(super) async fn run_thread_list_stream(
-    state: Arc<AppState>,
-    client_id: u64,
-    stream_id: String,
-    stream_key: String,
-    include_sub_agents: bool,
-    limits: Vec<usize>,
-    delay_ms: u64,
-    cancellation: Arc<AtomicBool>,
-) {
+pub(super) struct ThreadListStreamTask {
+    pub(super) state: Arc<AppState>,
+    pub(super) client_id: u64,
+    pub(super) stream_id: String,
+    pub(super) stream_key: String,
+    pub(super) include_sub_agents: bool,
+    pub(super) limits: Vec<usize>,
+    pub(super) delay_ms: u64,
+    pub(super) cancellation: Arc<AtomicBool>,
+}
+
+pub(super) async fn run_thread_list_stream(task: ThreadListStreamTask) {
+    let ThreadListStreamTask {
+        state,
+        client_id,
+        stream_id,
+        stream_key,
+        include_sub_agents,
+        limits,
+        delay_ms,
+        cancellation,
+    } = task;
     for (index, limit) in limits.iter().copied().enumerate() {
         if cancellation.load(Ordering::Relaxed) {
             break;

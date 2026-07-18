@@ -2563,7 +2563,9 @@ async fn queue_send_dedupe_limits_dispatch_failure_and_completion_fallbacks() {
             turn_start: json!({ "input": [] }),
         })
         .await;
-    assert!(queue.threads.read().await["action-in-flight"].items.len() >= 1);
+    assert!(!queue.threads.read().await["action-in-flight"]
+        .items
+        .is_empty());
 
     // Direct send_message calls to cover internal validation paths not reached
     // through the bridge handler (which has its own pre-validation layer).
