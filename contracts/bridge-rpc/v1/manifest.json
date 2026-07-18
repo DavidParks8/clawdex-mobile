@@ -1,0 +1,69 @@
+{
+  "fixtureFormatVersion": 1,
+  "protocolVersion": 1,
+  "bridgeMethods": [
+    "bridge/approvals/list", "bridge/approvals/resolve", "bridge/attachments/upload",
+    "bridge/browser/session/close", "bridge/browser/session/create", "bridge/browser/sessions/list",
+    "bridge/browser/targets/discover", "bridge/capabilities/read", "bridge/codex/app-server/restart",
+    "bridge/codex/auth/callback/forward", "bridge/cursor/credentials/read", "bridge/events/replay",
+    "bridge/fs/list", "bridge/git/branches", "bridge/git/clone", "bridge/git/commit",
+    "bridge/git/diff", "bridge/git/history", "bridge/git/push", "bridge/git/stage",
+    "bridge/git/stageAll", "bridge/git/status", "bridge/git/switch", "bridge/git/unstage",
+    "bridge/git/unstageAll", "bridge/github/auth/install", "bridge/health/read", "bridge/push/list",
+    "bridge/push/register", "bridge/push/unregister", "bridge/restart/start", "bridge/runtime/read",
+    "bridge/status/read", "bridge/terminal/exec", "bridge/thread/list/stream/cancel",
+    "bridge/thread/list/stream/start", "bridge/thread/queue/cancel", "bridge/thread/queue/read",
+    "bridge/thread/queue/send", "bridge/thread/queue/steer", "bridge/ui/dismiss", "bridge/ui/present",
+    "bridge/ui/resolve", "bridge/ui/update", "bridge/update/start", "bridge/userInput/resolve",
+    "bridge/workspaces/list"
+  ],
+  "mobileForwardedMethods": [
+    "account/login/cancel", "account/login/start", "account/logout", "account/rateLimits/read",
+    "account/read", "agent/list", "config/read", "model/list", "review/start", "thread/compact/start",
+    "thread/fork", "thread/list", "thread/loaded/list", "thread/name/set", "thread/read",
+    "thread/resume", "thread/start", "turn/interrupt", "turn/start", "turn/steer"
+  ],
+  "notifications": [
+    "bridge/approval.requested", "bridge/approval.resolved", "bridge/connection/state",
+    "bridge/git/updated", "bridge/terminal/completed", "bridge/thread/list/stream/batch",
+    "bridge/thread/list/stream/error", "bridge/thread/queue/updated", "bridge/ui.dismiss",
+    "bridge/ui.present", "bridge/ui.resolved", "bridge/ui.update", "bridge/userInput.requested",
+    "bridge/userInput.resolved"
+  ],
+  "errors": [
+    { "code": -32700, "name": "parseError" },
+    { "code": -32600, "name": "invalidRequest" },
+    { "code": -32601, "name": "methodNotFound" },
+    { "code": -32602, "name": "invalidParams" },
+    { "code": -32000, "name": "serverError" },
+    { "code": -32003, "name": "forbidden" },
+    { "code": -32004, "name": "notFound" },
+    { "code": -32005, "name": "overloaded" }
+  ],
+  "fixtures": {
+    "capabilities": {
+      "protocolVersion": 1,
+      "streamId": "00000000-0000-4000-8000-000000000001",
+      "activeEngine": "codex",
+      "preferredEngine": "codex",
+      "configuredEngines": ["codex"],
+      "availableEngines": ["codex"],
+      "unifiedChatList": false
+    },
+    "notification": {
+      "method": "bridge/approval.requested",
+      "protocolVersion": 1,
+      "streamId": "00000000-0000-4000-8000-000000000001",
+      "eventId": 7,
+      "params": { "id": "approval-1", "threadId": "thread-1" }
+    },
+    "overloadError": {
+      "id": "fixture-1",
+      "error": {
+        "code": -32005,
+        "message": "Bridge request capacity is exhausted",
+        "data": { "error": "overloaded", "resource": "global_in_flight_requests", "limit": 128, "retryable": true }
+      }
+    }
+  }
+}

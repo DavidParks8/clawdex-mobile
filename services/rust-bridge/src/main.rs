@@ -18588,3 +18588,20 @@ mod tests {
         ]));
     }
 }
+#[test]
+fn contract_fixture_manifest_matches_rust_protocol() {
+    let manifest: Value = serde_json::from_str(include_str!(
+        "../../../contracts/bridge-rpc/v1/manifest.json"
+    ))
+    .expect("valid RPC contract manifest");
+    assert_eq!(manifest["fixtureFormatVersion"], 1);
+    assert_eq!(manifest["protocolVersion"], BRIDGE_PROTOCOL_VERSION);
+    assert_eq!(
+        manifest["fixtures"]["notification"]["protocolVersion"],
+        BRIDGE_PROTOCOL_VERSION
+    );
+    assert_eq!(
+        manifest["fixtures"]["overloadError"]["error"]["code"],
+        RPC_SERVER_OVERLOADED
+    );
+}

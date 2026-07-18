@@ -9,5 +9,6 @@
     "typecheck": "cargo check",
     "lint": "cargo fmt --check",
     "test": "cargo test"
+    ,"test:contract": "cargo test contract_fixture_manifest"
   }
 }

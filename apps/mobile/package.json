@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "build": "node scripts/run-expo.cjs export --platform all --output-dir dist",
     "test": "jest --passWithNoTests",
+    "test:contract": "jest --runInBand src/api/__tests__/contractFixtures.test.ts",
     "test:watch": "jest --watch"
   },
   "dependencies": {

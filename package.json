@@ -74,6 +74,7 @@
     "secure:bridge:dev": "node ./scripts/start-bridge-secure.js --dev",
     "bridge:ts": "BRIDGE_WORKDIR=$(pwd) npm run -w @codex/mac-bridge dev",
     "version:sync": "node scripts/sync-versions.js",
+    "contract:check": "node scripts/validate-rpc-contract-fixtures.mjs && npm run test:contract -w apps/mobile && npm run test:contract -w @codex/rust-bridge",
     "prepack": "npm run build -w @clawdex/cursor-app-server",
     "build": "npm run --workspaces build",
     "typecheck": "npm run --workspaces typecheck",

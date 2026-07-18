@@ -17,6 +17,27 @@ permissions:
   contents: read
 
 jobs:
+  rpc-contract:
+    name: RPC Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+          package-manager-cache: false
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate RPC contract
+        run: npm run contract:check
+
   js-workspaces:
     name: JS - ${{ matrix.workspace }}
     runs-on: ubuntu-latest
