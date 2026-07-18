@@ -782,6 +782,12 @@ export const DrawerContent = memo(function DrawerContentComponent({
 
   useEffect(() => {
     return ws.onEvent((event: RpcNotification) => {
+      if (event.method === 'bridge/events/snapshotRequired') {
+        setRunIndicatorsByThread({});
+        scheduleLoadChats(0, true);
+        return;
+      }
+
       setRunIndicatorsByThread((prev) => updateDrawerRunIndicatorsForEvent(prev, event));
 
       if (

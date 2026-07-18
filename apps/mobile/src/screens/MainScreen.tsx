@@ -6326,6 +6326,30 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       return ws.onEvent((event: RpcNotification) => {
         const currentId = chatIdRef.current;
 
+        if (event.method === 'bridge/events/snapshotRequired') {
+          clearRunWatchdog();
+          setActiveCommands([]);
+          setStreamingText(null);
+          setActiveTurnId(null);
+          setPendingApproval(null);
+          setPendingUserInputRequest(null);
+          setActivePlan(null);
+          setActiveBridgeUiSurfaces([]);
+          if (currentId) {
+            replaceThreadBridgeUiSurfaces(currentId, []);
+          }
+          reasoningSummaryRef.current = {};
+          codexReasoningBufferRef.current = '';
+          if (currentId) {
+            void loadChat(currentId);
+            scheduleAgentThreadsRefresh(currentId);
+          }
+          if (agentDetailThreadId) {
+            void loadAgentDetail(agentDetailThreadId, true);
+          }
+          return;
+        }
+
         if (event.method === 'account/rateLimits/updated') {
           const params = toRecord(event.params);
           const snapshot = readAccountRateLimitSnapshot(
@@ -7772,6 +7796,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       pendingUserInputRequest?.id,
       loadChat,
       loadAgentDetail,
+      scheduleAgentThreadsRefresh,
       appendStopSystemMessageIfNeeded,
       agentDetailThreadId,
       bumpRunWatchdog,
@@ -7790,6 +7815,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       clearLiveReasoningMessage,
       clearRunWatchdog,
       readThreadContextUsage,
+      replaceThreadBridgeUiSurfaces,
       refreshPendingApprovalsForThread,
       removeThreadBridgeUiSurface,
       scheduleDisconnectActivity,

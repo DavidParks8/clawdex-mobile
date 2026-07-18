@@ -802,3 +802,17 @@ export interface RpcNotification {
   streamId?: string;
   eventId?: number;
 }
+
+export type BridgeSnapshotRequiredReason =
+  | 'streamChanged'
+  | 'replayTruncated'
+  | 'replayInconsistent';
+
+export interface BridgeSnapshotRequiredParams {
+  reason: BridgeSnapshotRequiredReason;
+  previousStreamId: string | null;
+  lastDeliveredEventId: number;
+  resumeAfterEventId: number;
+  earliestEventId: number | null;
+  latestEventId: number | null;
+}

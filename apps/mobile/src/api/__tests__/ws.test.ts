@@ -550,6 +550,12 @@ describe('HostBridgeWsClient', () => {
       })
     );
 
+    expect(
+      listener.mock.calls
+        .map((call) => (call[0] as { eventId?: number }).eventId)
+        .filter((id): id is number => typeof id === 'number')
+    ).toEqual([]);
+
     secondSocket.simulateMessage(
       JSON.stringify({
         id: replayRequest?.id,
@@ -559,23 +565,15 @@ describe('HostBridgeWsClient', () => {
           events: [
             {
               method: 'turn/started',
-              eventId: 101,
-              params: {
-                threadId: 'thr_gap',
-                turnId: 'turn_gap',
-              },
-            },
-            {
-              method: 'turn/started',
-              eventId: 102,
-              params: {
-                threadId: 'thr_gap',
-                turnId: 'turn_gap',
-              },
-            },
-            {
-              method: 'turn/started',
               eventId: 103,
+              params: {
+                threadId: 'thr_gap',
+                turnId: 'turn_gap',
+              },
+            },
+            {
+              method: 'turn/started',
+              eventId: 101,
               params: {
                 threadId: 'thr_gap',
                 turnId: 'turn_gap',
@@ -591,7 +589,7 @@ describe('HostBridgeWsClient', () => {
             },
             {
               method: 'turn/started',
-              eventId: 105,
+              eventId: 102,
               params: {
                 threadId: 'thr_gap',
                 turnId: 'turn_gap',
@@ -608,6 +606,14 @@ describe('HostBridgeWsClient', () => {
                 },
               },
             },
+            {
+              method: 'turn/started',
+              eventId: 105,
+              params: {
+                threadId: 'thr_gap',
+                turnId: 'turn_gap',
+              },
+            },
           ],
           hasMore: false,
         },
@@ -621,9 +627,170 @@ describe('HostBridgeWsClient', () => {
       .map((call) => (call[0] as { eventId?: number }).eventId)
       .filter((id): id is number => typeof id === 'number');
 
-    expect(eventIds).toEqual(expect.arrayContaining([101, 102, 103, 104, 105, 106]));
-    expect(eventIds.filter((id) => id === 105)).toHaveLength(1);
-    expect(eventIds.filter((id) => id === 106)).toHaveLength(1);
+    expect(eventIds).toEqual([101, 102, 103, 104, 105, 106]);
+  });
+
+  it('replays a live event gap before delivering the buffered event', async () => {
+    const client = new HostBridgeWsClient('http://localhost:8787');
+    const listener = jest.fn();
+    client.onEvent(listener);
+    client.connect();
+
+    const socket = latestMockSocket();
+    socket.simulateOpen();
+    simulateConnectionIdentity(socket, 'stream-gap');
+    socket.simulateMessage(
+      JSON.stringify({ method: 'turn/started', eventId: 10, params: { threadId: 'thr_gap' } })
+    );
+    listener.mockClear();
+
+    socket.simulateMessage(
+      JSON.stringify({ method: 'turn/completed', eventId: 12, params: { threadId: 'thr_gap' } })
+    );
+    await Promise.resolve();
+
+    expect(listener).not.toHaveBeenCalled();
+    const replayRequest = readLatestReplayRequest(socket);
+    expect(replayRequest?.params?.afterEventId).toBe(10);
+
+    socket.simulateMessage(
+      JSON.stringify({
+        id: replayRequest?.id,
+        result: {
+          protocolVersion: 1,
+          streamId: 'stream-gap',
+          earliestEventId: 1,
+          latestEventId: 12,
+          events: [
+            { method: 'item/completed', eventId: 11, params: { threadId: 'thr_gap' } },
+            { method: 'turn/completed', eventId: 12, params: { threadId: 'thr_gap' } },
+          ],
+          hasMore: false,
+        },
+      })
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(readDeliveredEventIds(listener)).toEqual([11, 12]);
+  });
+
+  it('emits a snapshot boundary when replay history is truncated', async () => {
+    const client = new HostBridgeWsClient('http://localhost:8787');
+    const listener = jest.fn();
+    client.onEvent(listener);
+    client.connect();
+
+    const firstSocket = latestMockSocket();
+    firstSocket.simulateOpen();
+    simulateConnectionIdentity(firstSocket, 'stream-truncated');
+    firstSocket.simulateMessage(
+      JSON.stringify({ method: 'turn/started', eventId: 10, params: { threadId: 'thr_1' } })
+    );
+    listener.mockClear();
+
+    client.disconnect();
+    client.connect();
+    const secondSocket = latestMockSocket();
+    secondSocket.simulateOpen();
+    simulateConnectionIdentity(secondSocket, 'stream-truncated');
+    await Promise.resolve();
+    const replayRequest = readLatestReplayRequest(secondSocket);
+
+    secondSocket.simulateMessage(
+      JSON.stringify({ method: 'turn/started', eventId: 26, params: { threadId: 'thr_1' } })
+    );
+
+    secondSocket.simulateMessage(
+      JSON.stringify({
+        id: replayRequest?.id,
+        result: {
+          protocolVersion: 1,
+          streamId: 'stream-truncated',
+          earliestEventId: 20,
+          latestEventId: 25,
+          events: [],
+          hasMore: false,
+        },
+      })
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'bridge/events/snapshotRequired',
+        params: expect.objectContaining({
+          reason: 'replayTruncated',
+          lastDeliveredEventId: 10,
+          resumeAfterEventId: 25,
+          earliestEventId: 20,
+          latestEventId: 25,
+        }),
+      })
+    );
+
+    expect(readDeliveredEventIds(listener)).toEqual([26]);
+  });
+
+  it('ignores a stale replay response after the stream changes', async () => {
+    const client = new HostBridgeWsClient('http://localhost:8787');
+    const listener = jest.fn();
+    client.onEvent(listener);
+    client.connect();
+
+    const firstSocket = latestMockSocket();
+    firstSocket.simulateOpen();
+    simulateConnectionIdentity(firstSocket, 'stream-old');
+    firstSocket.simulateMessage(
+      JSON.stringify({ method: 'turn/started', eventId: 10, params: { threadId: 'thr_old' } })
+    );
+
+    client.disconnect();
+    client.connect();
+    const secondSocket = latestMockSocket();
+    secondSocket.simulateOpen();
+    simulateConnectionIdentity(secondSocket, 'stream-old');
+    await Promise.resolve();
+    const replayRequest = readLatestReplayRequest(secondSocket);
+    expect(replayRequest).toBeDefined();
+
+    simulateConnectionIdentity(secondSocket, 'stream-new');
+    secondSocket.simulateMessage(
+      JSON.stringify({
+        id: replayRequest?.id,
+        result: {
+          protocolVersion: 1,
+          streamId: 'stream-old',
+          earliestEventId: 1,
+          latestEventId: 11,
+          events: [
+            { method: 'turn/completed', eventId: 11, params: { threadId: 'thr_old' } },
+          ],
+          hasMore: false,
+        },
+      })
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    secondSocket.simulateMessage(
+      JSON.stringify({
+        method: 'turn/started',
+        protocolVersion: 1,
+        streamId: 'stream-new',
+        eventId: 4,
+        params: { threadId: 'thr_new' },
+      })
+    );
+
+    expect(readDeliveredEventIds(listener)).toEqual([10, 4]);
+    expect(
+      listener.mock.calls.some(
+        (call) =>
+          (call[0] as { eventId?: number; params?: { threadId?: string } }).eventId === 11
+      )
+    ).toBe(false);
   });
 
   it('accepts a non-one counter reset after the bridge stream changes', async () => {
@@ -724,4 +891,24 @@ function simulateConnectionIdentity(
       },
     })
   );
+}
+
+function readLatestReplayRequest(socket: MockWebSocket): {
+  id: string;
+  params?: { afterEventId?: number };
+} | undefined {
+  return socket.send.mock.calls
+    .map((call) => JSON.parse(String(call[0])) as {
+      id: string;
+      method: string;
+      params?: { afterEventId?: number };
+    })
+    .filter((payload) => payload.method === 'bridge/events/replay')
+    .at(-1);
+}
+
+function readDeliveredEventIds(listener: jest.Mock): number[] {
+  return listener.mock.calls
+    .map((call) => (call[0] as { eventId?: number }).eventId)
+    .filter((id): id is number => typeof id === 'number');
 }

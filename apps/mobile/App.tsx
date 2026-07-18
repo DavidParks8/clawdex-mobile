@@ -483,6 +483,11 @@ export default function App() {
     }
 
     return ws.onEvent((event) => {
+      if (event.method === 'bridge/events/snapshotRequired') {
+        void api.readAccountRateLimits({ forceRefresh: true }).catch(() => {});
+        return;
+      }
+
       if (event.method === 'account/rateLimits/updated') {
         const params = toRecord(event.params);
         const snapshot = readAccountRateLimitSnapshot(

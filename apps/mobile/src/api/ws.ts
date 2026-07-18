@@ -1,6 +1,10 @@
 import { Platform } from 'react-native';
 
-import type { RpcNotification } from './types';
+import type {
+  BridgeSnapshotRequiredParams,
+  BridgeSnapshotRequiredReason,
+  RpcNotification,
+} from './types';
 
 type EventListener = (event: RpcNotification) => void;
 type StatusListener = (connected: boolean) => void;
@@ -77,7 +81,6 @@ interface ReplayEventsResponse {
 export class HostBridgeWsClient {
   static readonly PROTOCOL_VERSION = 1;
   private static readonly TURN_COMPLETION_TTL_MS = 5 * 60 * 1000;
-  private static readonly RECENT_EVENT_ID_CACHE_SIZE = 4096;
   private socket: WebSocket | null = null;
   private pendingSocket: WebSocket | null = null;
   private connected = false;
@@ -90,8 +93,7 @@ export class HostBridgeWsClient {
   private readonly statusListeners = new Set<StatusListener>();
   private readonly pendingRequests = new Map<string | number, PendingRequest>();
   private readonly recentTurnCompletions = new Map<string, TurnCompletionSnapshot>();
-  private readonly recentEventIds = new Set<number>();
-  private readonly recentEventIdQueue: number[] = [];
+  private readonly pendingEvents = new Map<number, RpcNotification>();
   private readonly pendingTurnWaits = new Set<string>();
   private readonly authToken: string | null;
   private readonly allowQueryTokenAuth: boolean;
@@ -100,6 +102,7 @@ export class HostBridgeWsClient {
   private lastSeenEventId = 0;
   private replaySupported = true;
   private replayInFlight: Promise<void> | null = null;
+  private replayGeneration = 0;
   private requestCounter = 0;
   private streamId: string | null = null;
   private protocolError: BridgeProtocolVersionError | null = null;
@@ -506,7 +509,7 @@ export class HostBridgeWsClient {
   private handleNotificationRecord(
     record: Record<string, unknown>,
     options?: {
-      replayFloorEventId?: number;
+      source?: 'live' | 'replay';
     }
   ): void {
     const method = readString(record.method);
@@ -522,38 +525,6 @@ export class HostBridgeWsClient {
       return;
     }
     const eventId = readEventId(record);
-    if (eventId !== null) {
-      // Bridge restarts reset event IDs; treat that as a new stream.
-      if (eventId === 1 && this.lastSeenEventId > 1) {
-        this.lastSeenEventId = 0;
-        this.clearRecentEventIdCache();
-      }
-
-      const replayFloorEventId = options?.replayFloorEventId ?? null;
-      if (replayFloorEventId !== null) {
-        if (eventId <= replayFloorEventId) {
-          return;
-        }
-      } else if (eventId <= this.lastSeenEventId) {
-        return;
-      }
-
-      if (this.recentEventIds.has(eventId)) {
-        return;
-      }
-      this.markEventIdSeen(eventId);
-
-      if (eventId > this.lastSeenEventId) {
-        this.lastSeenEventId = eventId;
-      }
-    }
-
-    if (method === 'turn/completed') {
-      const completion = toTurnCompletionSnapshot(params);
-      if (completion?.turnId) {
-        this.rememberTurnCompletion(completion);
-      }
-    }
 
     const event: RpcNotification = {
       method,
@@ -568,7 +539,37 @@ export class HostBridgeWsClient {
     if (eventId !== null) {
       event.eventId = eventId;
     }
-    this.emitEvent(event);
+
+    if (eventId === null) {
+      if (event.method === 'turn/completed') {
+        const completion = toTurnCompletionSnapshot(event.params);
+        if (completion?.turnId) {
+          this.rememberTurnCompletion(completion);
+        }
+      }
+      this.emitEvent(event);
+    } else {
+      if (protocolVersion === null && eventId === 1 && this.lastSeenEventId > 1) {
+        this.resetDeliveryEpoch('streamChanged', null, null);
+      }
+      if (eventId <= this.lastSeenEventId || this.pendingEvents.has(eventId)) {
+        return;
+      }
+
+      if (this.lastSeenEventId === 0) {
+        this.emitNumberedEvent(event);
+      } else {
+        this.pendingEvents.set(eventId, event);
+        if (options?.source === 'replay') {
+          this.drainPendingEvents();
+        } else if (!this.replayInFlight) {
+          this.drainPendingEvents();
+          if (this.hasPendingGap()) {
+            this.scheduleReplay();
+          }
+        }
+      }
+    }
 
     if (
       method === 'bridge/connection/state' &&
@@ -590,23 +591,39 @@ export class HostBridgeWsClient {
       return;
     }
 
-    this.replayInFlight = this.replayMissedEvents()
+    const generation = this.replayGeneration;
+    let replayCompleted = false;
+    const replayPromise = this.replayMissedEvents(generation)
+      .then(() => {
+        replayCompleted = true;
+      })
       .catch(() => {
-        // Replay is best-effort; live WS stream continues regardless.
+        // Keep buffered events for retry on the next live event or reconnect.
       })
       .finally(() => {
+        if (this.replayInFlight !== replayPromise) {
+          return;
+        }
         this.replayInFlight = null;
+        if (!replayCompleted || generation !== this.replayGeneration) {
+          return;
+        }
+        this.drainPendingEvents();
+        if (this.hasPendingGap()) {
+          this.scheduleReplay();
+        }
       });
+    this.replayInFlight = replayPromise;
   }
 
-  private async replayMissedEvents(): Promise<void> {
+  private async replayMissedEvents(generation: number): Promise<void> {
     if (!this.replaySupported || this.lastSeenEventId <= 0) {
       return;
     }
 
     let cursor = this.lastSeenEventId;
-    const maxPages = 10;
-    for (let page = 0; page < maxPages; page += 1) {
+    let targetEventId: number | null = null;
+    while (generation === this.replayGeneration) {
       let response: ReplayEventsResponse;
       try {
         response = await this.request<ReplayEventsResponse>('bridge/events/replay', {
@@ -621,6 +638,10 @@ export class HostBridgeWsClient {
         throw error;
       }
 
+      if (generation !== this.replayGeneration) {
+        return;
+      }
+
       const identityResult = this.applyStreamIdentity(
         readNumber(response.protocolVersion),
         readString(response.streamId)
@@ -630,10 +651,21 @@ export class HostBridgeWsClient {
       }
 
       const latestEventId = readNumber(response.latestEventId);
+      const earliestEventId = readNumber(response.earliestEventId);
       if (latestEventId !== null && latestEventId < cursor) {
-        this.lastSeenEventId = 0;
-        this.clearRecentEventIdCache();
+        this.resetDeliveryEpoch('replayInconsistent', earliestEventId, latestEventId);
         return;
+      }
+      if (earliestEventId !== null && earliestEventId > cursor + 1) {
+        this.resetDeliveryEpoch('replayTruncated', earliestEventId, latestEventId);
+        return;
+      }
+      if (earliestEventId === null && latestEventId !== null && latestEventId > cursor) {
+        this.resetDeliveryEpoch('replayTruncated', earliestEventId, latestEventId);
+        return;
+      }
+      if (targetEventId === null) {
+        targetEventId = latestEventId;
       }
 
       const events = Array.isArray(response.events) ? response.events : [];
@@ -642,39 +674,102 @@ export class HostBridgeWsClient {
         if (!record) {
           continue;
         }
-        this.handleNotificationRecord(record, {
-          replayFloorEventId: cursor,
-        });
+        this.handleNotificationRecord(record, { source: 'replay' });
+      }
+
+      const previousCursor = cursor;
+      cursor = this.lastSeenEventId;
+      const pageEventIds = events
+        .map((entry) => toRecord(entry))
+        .map((entry) => (entry ? readEventId(entry) : null))
+        .filter((eventId): eventId is number => eventId !== null);
+      if (targetEventId === null && pageEventIds.length > 0) {
+        targetEventId = Math.max(...pageEventIds);
+      }
+      if (targetEventId === null || cursor >= targetEventId) {
+        return;
       }
 
       const hasMore = response.hasMore === true;
       if (!hasMore) {
+        this.resetDeliveryEpoch('replayInconsistent', earliestEventId, latestEventId);
         return;
       }
-
-      if (this.lastSeenEventId <= cursor) {
+      if (cursor <= previousCursor) {
+        this.resetDeliveryEpoch('replayInconsistent', earliestEventId, latestEventId);
         return;
-      }
-      cursor = this.lastSeenEventId;
-    }
-  }
-
-  private markEventIdSeen(eventId: number): void {
-    this.recentEventIds.add(eventId);
-    this.recentEventIdQueue.push(eventId);
-    while (
-      this.recentEventIdQueue.length > HostBridgeWsClient.RECENT_EVENT_ID_CACHE_SIZE
-    ) {
-      const removed = this.recentEventIdQueue.shift();
-      if (typeof removed === 'number') {
-        this.recentEventIds.delete(removed);
       }
     }
   }
 
-  private clearRecentEventIdCache(): void {
-    this.recentEventIds.clear();
-    this.recentEventIdQueue.length = 0;
+  private drainPendingEvents(): void {
+    let nextEventId = this.lastSeenEventId + 1;
+    while (this.pendingEvents.has(nextEventId)) {
+      const event = this.pendingEvents.get(nextEventId);
+      this.pendingEvents.delete(nextEventId);
+      if (event) {
+        this.emitNumberedEvent(event);
+      }
+      nextEventId = this.lastSeenEventId + 1;
+    }
+  }
+
+  private hasPendingGap(): boolean {
+    if (this.pendingEvents.size === 0) {
+      return false;
+    }
+    return !this.pendingEvents.has(this.lastSeenEventId + 1);
+  }
+
+  private emitNumberedEvent(event: RpcNotification): void {
+    if (typeof event.eventId !== 'number') {
+      return;
+    }
+    this.lastSeenEventId = event.eventId;
+    if (event.method === 'turn/completed') {
+      const completion = toTurnCompletionSnapshot(event.params);
+      if (completion?.turnId) {
+        this.rememberTurnCompletion(completion);
+      }
+    }
+    this.emitEvent(event);
+  }
+
+  private resetDeliveryEpoch(
+    reason: BridgeSnapshotRequiredReason,
+    earliestEventId: number | null,
+    latestEventId: number | null,
+    previousStreamId: string | null = this.streamId
+  ): void {
+    const lastDeliveredEventId = this.lastSeenEventId;
+    const resumeAfterEventId = latestEventId ?? 0;
+    this.replayGeneration += 1;
+    if (reason === 'streamChanged') {
+      this.pendingEvents.clear();
+    } else {
+      for (const eventId of this.pendingEvents.keys()) {
+        if (eventId <= resumeAfterEventId) {
+          this.pendingEvents.delete(eventId);
+        }
+      }
+    }
+    this.lastSeenEventId = resumeAfterEventId;
+    this.replayInFlight = null;
+    const params: BridgeSnapshotRequiredParams = {
+      reason,
+      previousStreamId,
+      lastDeliveredEventId,
+      resumeAfterEventId,
+      earliestEventId,
+      latestEventId,
+    };
+    this.emitEvent({
+      method: 'bridge/events/snapshotRequired',
+      protocolVersion: HostBridgeWsClient.PROTOCOL_VERSION,
+      streamId: this.streamId ?? undefined,
+      params: params as unknown as Record<string, unknown>,
+    });
+    this.drainPendingEvents();
   }
 
   private applyStreamIdentity(
@@ -703,9 +798,9 @@ export class HostBridgeWsClient {
       return 'same';
     }
 
+    const previousStreamId = this.streamId;
     this.streamId = streamId;
-    this.lastSeenEventId = 0;
-    this.clearRecentEventIdCache();
+    this.resetDeliveryEpoch('streamChanged', null, null, previousStreamId);
     return 'changed';
   }
 
