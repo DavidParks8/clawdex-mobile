@@ -31,6 +31,7 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 import { HostBridgeApiClient } from './src/api/client';
 import { toRecord } from './src/api/chatMapping';
 import { readAccountRateLimitSnapshot } from './src/api/rateLimits';
+import { bindAppWebSocketLifecycle } from './src/appWebSocketLifecycle';
 import {
   APP_SETTINGS_VERSION,
   DEFAULT_WORKSPACE_CHAT_LIMIT,
@@ -322,8 +323,7 @@ export default function App() {
       return;
     }
 
-    ws.connect();
-    return () => ws.disconnect();
+    return bindAppWebSocketLifecycle(ws);
   }, [ws]);
 
   useEffect(() => {

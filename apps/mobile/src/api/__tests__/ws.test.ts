@@ -100,6 +100,7 @@ describe('HostBridgeWsClient', () => {
     const listener = jest.fn();
     client.onEvent(listener);
     client.connect();
+    latestMockSocket().simulateOpen();
 
     latestMockSocket().simulateMessage(
       JSON.stringify({ method: 'turn/completed', params: { threadId: 'thr_1' } })
@@ -212,9 +213,109 @@ describe('HostBridgeWsClient', () => {
     expect(listener.mock.calls).toEqual([[false], [true]]);
   });
 
+  it('retries when a socket closes before opening', async () => {
+    jest.useFakeTimers();
+    jest.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const client = new HostBridgeWsClient('http://localhost:8787');
+      client.connect();
+
+      latestMockSocket().simulateClose();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(jest.getTimerCount()).toBe(1);
+      await jest.advanceTimersByTimeAsync(499);
+      expect(mockInstances).toHaveLength(1);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(mockInstances).toHaveLength(2);
+    } finally {
+      jest.restoreAllMocks();
+      jest.useRealTimers();
+    }
+  });
+
+  it('retries pre-open errors with one exponential backoff timer', async () => {
+    jest.useFakeTimers();
+    jest.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const client = new HostBridgeWsClient('http://localhost:8787');
+      client.connect();
+
+      const firstSocket = latestMockSocket();
+      firstSocket.simulateError();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(firstSocket.close).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(1);
+      await jest.advanceTimersByTimeAsync(500);
+      expect(mockInstances).toHaveLength(2);
+
+      latestMockSocket().simulateClose();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(jest.getTimerCount()).toBe(1);
+      await jest.advanceTimersByTimeAsync(999);
+      expect(mockInstances).toHaveLength(2);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(mockInstances).toHaveLength(3);
+    } finally {
+      jest.restoreAllMocks();
+      jest.useRealTimers();
+    }
+  });
+
+  it('disconnect() cancels a scheduled reconnect', async () => {
+    jest.useFakeTimers();
+    jest.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const client = new HostBridgeWsClient('http://localhost:8787');
+      client.connect();
+      latestMockSocket().simulateClose();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(jest.getTimerCount()).toBe(1);
+
+      client.disconnect();
+      expect(jest.getTimerCount()).toBe(0);
+      await jest.advanceTimersByTimeAsync(5_000);
+      expect(mockInstances).toHaveLength(1);
+    } finally {
+      jest.restoreAllMocks();
+      jest.useRealTimers();
+    }
+  });
+
+  it('ignores stale socket callbacks after a new connection owns the transport', () => {
+    const client = new HostBridgeWsClient('http://localhost:8787');
+    const listener = jest.fn();
+    client.onEvent(listener);
+
+    client.connect();
+    const staleSocket = latestMockSocket();
+    client.disconnect();
+
+    client.connect();
+    const activeSocket = latestMockSocket();
+    activeSocket.simulateOpen();
+    simulateConnectionIdentity(activeSocket, 'stream-active');
+    listener.mockClear();
+
+    staleSocket.simulateOpen();
+    staleSocket.simulateMessage(
+      JSON.stringify({ method: 'turn/completed', params: { threadId: 'thr_stale' } })
+    );
+    staleSocket.simulateClose();
+
+    expect(client.isConnected).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   it('waitForTurnCompletion resolves from cached completion events', async () => {
     const client = new HostBridgeWsClient('http://localhost:8787');
     client.connect();
+    latestMockSocket().simulateOpen();
 
     latestMockSocket().simulateMessage(
       JSON.stringify({
@@ -235,6 +336,7 @@ describe('HostBridgeWsClient', () => {
   it('waitForTurnCompletion accepts snake_case completion payloads', async () => {
     const client = new HostBridgeWsClient('http://localhost:8787');
     client.connect();
+    latestMockSocket().simulateOpen();
 
     const waitPromise = client.waitForTurnCompletion('thr_2', 'turn_2', 100);
     latestMockSocket().simulateMessage(
@@ -254,6 +356,7 @@ describe('HostBridgeWsClient', () => {
   it('waitForTurnCompletion tolerates completion payloads without turn id', async () => {
     const client = new HostBridgeWsClient('http://localhost:8787');
     client.connect();
+    latestMockSocket().simulateOpen();
 
     const waitPromise = client.waitForTurnCompletion('thr_3', 'turn_3', 100);
     latestMockSocket().simulateMessage(
@@ -272,6 +375,7 @@ describe('HostBridgeWsClient', () => {
   it('waitForTurnCompletion resolves from codex task_complete event', async () => {
     const client = new HostBridgeWsClient('http://localhost:8787');
     client.connect();
+    latestMockSocket().simulateOpen();
 
     const waitPromise = client.waitForTurnCompletion('thr_4', 'turn_4', 100);
     latestMockSocket().simulateMessage(
@@ -292,6 +396,7 @@ describe('HostBridgeWsClient', () => {
   it('waitForTurnCompletion resolves from codex event using source parent_thread_id', async () => {
     const client = new HostBridgeWsClient('http://localhost:8787');
     client.connect();
+    latestMockSocket().simulateOpen();
 
     const waitPromise = client.waitForTurnCompletion('thr_5', 'turn_5', 100);
     latestMockSocket().simulateMessage(
@@ -318,6 +423,7 @@ describe('HostBridgeWsClient', () => {
   it('waitForTurnCompletion prefers the direct child thread id over parent_thread_id', async () => {
     const client = new HostBridgeWsClient('http://localhost:8787');
     client.connect();
+    latestMockSocket().simulateOpen();
 
     const waitPromise = client.waitForTurnCompletion('thr_child', 'turn_child', 100);
     latestMockSocket().simulateMessage(
@@ -347,6 +453,7 @@ describe('HostBridgeWsClient', () => {
     const listener = jest.fn();
     client.onEvent(listener);
     client.connect();
+    latestMockSocket().simulateOpen();
 
     latestMockSocket().simulateMessage(
       JSON.stringify({

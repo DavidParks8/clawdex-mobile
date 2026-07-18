@@ -86,6 +86,7 @@ export class HostBridgeWsClient {
   private connected = false;
   private shouldReconnect = false;
   private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connectPromise: Promise<void> | null = null;
   private connectGeneration = 0;
 
@@ -123,13 +124,39 @@ export class HostBridgeWsClient {
   }
 
   connect(): void {
+    if (this.protocolError) {
+      return;
+    }
     this.shouldReconnect = true;
-    if (this.socket || this.connectPromise) {
+    this.startConnect();
+  }
+
+  private startConnect(): void {
+    if (
+      !this.shouldReconnect ||
+      this.socket ||
+      this.pendingSocket ||
+      this.connectPromise ||
+      this.reconnectTimer
+    ) {
       return;
     }
 
     const generation = ++this.connectGeneration;
-    const promise = this.openSocket(generation);
+    const promise = this.openSocket(generation).finally(() => {
+      if (this.connectPromise !== promise) {
+        return;
+      }
+      this.connectPromise = null;
+      if (
+        this.shouldReconnect &&
+        generation === this.connectGeneration &&
+        !this.socket &&
+        !this.pendingSocket
+      ) {
+        this.scheduleReconnect();
+      }
+    });
     this.connectPromise = promise;
     void promise.catch(() => {
       // Connection errors are surfaced through status listeners and retries.
@@ -139,6 +166,13 @@ export class HostBridgeWsClient {
   disconnect(): void {
     this.shouldReconnect = false;
     this.connectGeneration += 1;
+    this.reconnectAttempts = 0;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.replayGeneration += 1;
+    this.replayInFlight = null;
 
     const pendingSocket = this.pendingSocket;
     this.pendingSocket = null;
@@ -345,7 +379,6 @@ export class HostBridgeWsClient {
       return;
     }
 
-    this.connect();
     if (this.connectPromise) {
       await this.connectPromise;
     }
@@ -356,8 +389,7 @@ export class HostBridgeWsClient {
   }
 
   private async openSocket(generation: number): Promise<void> {
-    try {
-      await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
         const WebSocketCtor = globalThis.WebSocket as unknown as ReactNativeWebSocketConstructor;
         const socketUrl = this.socketUrl();
         const shouldUseQueryTokenAuth = this.shouldUseQueryTokenAuth();
@@ -410,34 +442,56 @@ export class HostBridgeWsClient {
             this.rejectAllPending(new Error('Bridge websocket closed'));
           }
 
-          if (this.shouldReconnect && generation === this.connectGeneration) {
-            this.scheduleReconnect();
-          }
-
           if (!settled) {
             settled = true;
             reject(new Error('Bridge websocket closed before open'));
+            return;
+          }
+
+          if (this.shouldReconnect && generation === this.connectGeneration) {
+            this.scheduleReconnect();
           }
         };
 
         socket.onerror = () => {
           if (!settled) {
             settled = true;
+            if (this.pendingSocket === socket) {
+              this.pendingSocket = null;
+            }
+            socket.close();
             reject(new Error('Bridge websocket error'));
+            return;
+          }
+
+          if (this.socket === socket) {
+            this.socket = null;
+            socket.close();
+            this.emitStatus(false);
+            this.rejectAllPending(new Error('Bridge websocket error'));
+            if (this.shouldReconnect && generation === this.connectGeneration) {
+              this.scheduleReconnect();
+            }
           }
         };
 
         socket.onmessage = (message) => {
+          if (generation !== this.connectGeneration || this.socket !== socket) {
+            return;
+          }
           this.handleIncoming(String(message.data));
         };
       });
-    } finally {
-      this.connectPromise = null;
-    }
   }
 
   private scheduleReconnect(): void {
-    if (!this.shouldReconnect || this.socket || this.connectPromise) {
+    if (
+      !this.shouldReconnect ||
+      this.socket ||
+      this.pendingSocket ||
+      this.connectPromise ||
+      this.reconnectTimer
+    ) {
       return;
     }
 
@@ -447,17 +501,18 @@ export class HostBridgeWsClient {
     const jitter = Math.floor(Math.random() * 250);
     const delay = Math.min(5000, 500 * 2 ** attempt) + jitter;
 
-    setTimeout(() => {
-      if (!this.shouldReconnect || this.socket || this.connectPromise) {
+    const generation = this.connectGeneration;
+    const timer = setTimeout(() => {
+      if (this.reconnectTimer !== timer) {
         return;
       }
-      const generation = ++this.connectGeneration;
-      const promise = this.openSocket(generation);
-      this.connectPromise = promise;
-      void promise.catch(() => {
-        // Retried connect failures are handled by subsequent retries.
-      });
+      this.reconnectTimer = null;
+      if (!this.shouldReconnect || generation !== this.connectGeneration) {
+        return;
+      }
+      this.startConnect();
     }, delay);
+    this.reconnectTimer = timer;
   }
 
   private handleIncoming(raw: string): void {

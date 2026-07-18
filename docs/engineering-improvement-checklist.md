@@ -10,7 +10,7 @@ Historical plans under `docs/plans/` are not the source of truth for this work.
 
 ## Working Rules
 
-- Preserve existing user-visible behavior unless the item describes an intentional behavior change.
+- Do not add or preserve backward-compatibility paths unless a checklist item explicitly requires one. Prefer the current contract and remove legacy fallbacks in touched code.
 - Keep Rust and mobile contracts synchronized when an RPC changes.
 - Do not restart a running bridge during automated verification.
 - Prefer integration coverage for transport, concurrency, lifecycle, and security boundaries.
@@ -22,7 +22,7 @@ Historical plans under `docs/plans/` are not the source of truth for this work.
 - [x] **1. Preserve structured RPC errors in mobile.** Add a typed mobile RPC error carrying `code`, `message`, `data`, and `method`; stop reducing bridge errors to strings; update compatibility checks to use structured fields; add transport and client tests. Acceptance: callers can distinguish unsupported parameters from transport/backend failures without message matching.
 - [x] **2. Publish protocol identity and stream identity.** Add a protocol version and random bridge boot/stream ID to capabilities, connection state, replay responses, and replayable notifications; mirror the contract in mobile types. Acceptance: mobile can unambiguously detect bridge restart and incompatible protocol versions.
 - [x] **3. Replace mobile replay with an ordered synchronization state machine.** Buffer live events during replay, merge by event ID, emit strictly increasing events, detect gaps, and trigger snapshot convergence after stream changes or replay truncation. Acceptance: randomized live/replay interleavings cannot regress event order or skip known gaps.
-- [ ] **4. Make WebSocket reconnect ownership deterministic.** Track and cancel reconnect timers, retry sockets that close before opening, pause connections while backgrounded, and reconnect/replay on foreground. Acceptance: tests cover pre-open failure, repeated backoff, disconnect cancellation, and foreground recovery.
+- [x] **4. Make WebSocket reconnect ownership deterministic.** Track and cancel reconnect timers, retry sockets that close before opening, pause connections while backgrounded, and reconnect/replay on foreground. Acceptance: tests cover pre-open failure, repeated backoff, disconnect cancellation, and foreground recovery.
 - [ ] **5. Add WebSocket resource limits.** Configure frame/message limits, per-client and global in-flight request limits, bounded pending requests, and explicit overload errors. Acceptance: oversized frames and request floods fail without unbounded task or memory growth.
 - [ ] **6. Generate or validate cross-language RPC contracts.** Establish one versioned schema source or checked contract fixtures for method names, request/response DTOs, notifications, and errors. Acceptance: CI detects incompatible Rust/TypeScript contract drift.
 
@@ -69,3 +69,4 @@ Record notable decisions or intentionally deferred acceptance criteria here when
 - Item 1: `RpcRequestError` now preserves JSON-RPC error identity. Compatibility retries require structured `-32602` invalid-params errors, and backend failures no longer trigger resume fallbacks or approval-policy changes.
 - Item 2: Protocol version `1` and a random per-process `streamId` now identify capabilities, connections, replay responses, and notifications. Mobile resets event cursors on stream changes and rejects unsupported protocol versions.
 - Item 3: Mobile now buffers live events during replay, emits numbered events only in contiguous order, replays live gaps, and emits `bridge/events/snapshotRequired` when stream changes or replay truncation require persisted-state convergence.
+- Item 4: Mobile now owns exactly one reconnect timer, retries pre-open failures with bounded backoff, invalidates stale socket/replay callbacks, and suspends the WebSocket outside the active app lifecycle.
