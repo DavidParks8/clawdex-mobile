@@ -193,6 +193,7 @@ import {
   normalizeServiceTier,
   toSelectedServiceTier,
   resolveSelectedServiceTier,
+  shouldSurfaceChatLoadError,
   toApprovalPolicyForMode,
   getChatModelPreferencesPath,
   getChatDraftsPath,
@@ -3188,7 +3189,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       workspaceBridgeRoot,
     ]);
 
-    const refreshModelOptions = useCallback(async () => {
+    const refreshModelOptions = useCallback(async (reportError = false) => {
       const requestId = modelOptionsRequestRef.current + 1;
       modelOptionsRequestRef.current = requestId;
       const requestedEngine = activeChatEngine;
@@ -3207,7 +3208,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           [requestedEngine]: models,
         }));
       } catch (err) {
-        if (modelOptionsRequestRef.current === requestId) {
+        if (reportError && modelOptionsRequestRef.current === requestId) {
           setError((err as Error).message);
         }
       } finally {
@@ -3219,7 +3220,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
 
     const openModelModal = useCallback(() => {
       setModelModalVisible(true);
-      void refreshModelOptions();
+      void refreshModelOptions(true);
     }, [refreshModelOptions]);
 
     const closeModelModal = useCallback(() => {
@@ -3687,8 +3688,15 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
     }, [draft]);
 
     useEffect(() => {
-      void refreshModelOptions();
-    }, [refreshModelOptions]);
+      if (ws.isConnected) {
+        void refreshModelOptions();
+      }
+      return ws.onStatus((connected) => {
+        if (connected) {
+          void refreshModelOptions();
+        }
+      });
+    }, [refreshModelOptions, ws]);
 
     useEffect(() => {
       const workspace = normalizeWorkspacePath(attachmentWorkspace);
@@ -5170,7 +5178,11 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
     const loadChat = useCallback(
       async (
         chatId: string,
-        options?: { forceScroll?: boolean; preserveRuntimeState?: boolean }
+        options?: {
+          forceScroll?: boolean;
+          preserveRuntimeState?: boolean;
+          revalidate?: boolean;
+        }
       ) => {
         const requestId = loadChatRequestRef.current + 1;
         loadChatRequestRef.current = requestId;
@@ -5256,6 +5268,17 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           if (requestId !== loadChatRequestRef.current) {
             return;
           }
+          const cachedChat = selectedChatRef.current;
+          if (
+            !shouldSurfaceChatLoadError(
+              options?.revalidate,
+              cachedChat?.id,
+              chatId,
+              cachedChat?.messages.length ?? 0
+            )
+          ) {
+            return;
+          }
           setError((err as Error).message);
           setActivity({
             tone: 'error',
@@ -5332,6 +5355,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           loadChat(id, {
             forceScroll: true,
             preserveRuntimeState: true,
+            revalidate: hasHydratedSnapshot,
           }).catch(() => {});
           return;
         }
@@ -5372,7 +5396,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
 
         applyThreadRuntimeSnapshot(id);
         void refreshPendingApprovalsForThread(id);
-        loadChat(id, { forceScroll: true }).catch(() => {});
+        loadChat(id, { forceScroll: true, revalidate: hasHydratedSnapshot }).catch(() => {});
       },
       [
         api,

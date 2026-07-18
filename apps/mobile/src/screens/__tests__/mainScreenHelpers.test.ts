@@ -7,6 +7,7 @@ import {
   mergeChatEngines,
   parseChatBridgeUiSurfaces,
   parseGoalSlashObjective,
+  shouldSurfaceChatLoadError,
   toBridgeUiSurface,
 } from '../mainScreenHelpers';
 
@@ -38,6 +39,13 @@ describe('mainScreenHelpers', () => {
   it('does not invent Codex when no harness is reported', () => {
     expect(mergeChatEngines([])).toEqual([]);
     expect(mergeChatEngines(['opencode'], 'opencode')).toEqual(['opencode']);
+  });
+
+  it('keeps transient revalidation failures behind a hydrated chat snapshot', () => {
+    expect(shouldSurfaceChatLoadError(true, 'thread-1', 'thread-1', 3)).toBe(false);
+    expect(shouldSurfaceChatLoadError(false, 'thread-1', 'thread-1', 3)).toBe(true);
+    expect(shouldSurfaceChatLoadError(true, 'thread-2', 'thread-1', 3)).toBe(true);
+    expect(shouldSurfaceChatLoadError(true, 'thread-1', 'thread-1', 0)).toBe(true);
   });
 
   it('keeps successful git clone responses quiet', () => {

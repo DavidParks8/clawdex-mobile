@@ -1564,6 +1564,19 @@ export function toApprovalPolicyForMode(mode: ApprovalMode | null | undefined): 
   return mode === 'yolo' ? 'never' : 'untrusted';
 }
 
+export function shouldSurfaceChatLoadError(
+  revalidate: boolean | undefined,
+  cachedChatId: string | null | undefined,
+  requestedChatId: string,
+  cachedMessageCount: number
+): boolean {
+  return !(
+    revalidate === true &&
+    cachedChatId === requestedChatId &&
+    cachedMessageCount > 0
+  );
+}
+
 export function getChatModelPreferencesPath(): string | null {
   const base = FileSystem.documentDirectory;
   if (typeof base !== 'string' || base.trim().length === 0) {

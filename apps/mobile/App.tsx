@@ -33,6 +33,14 @@ import { toRecord } from './src/api/chatMapping';
 import { readAccountRateLimitSnapshot } from './src/api/rateLimits';
 import { bindAppWebSocketLifecycle } from './src/appWebSocketLifecycle';
 import {
+  createEmptyChatSnapshotCache,
+  deleteChatSnapshotCache,
+  loadChatSnapshotCache,
+  saveChatSnapshotCache,
+  updateChatSnapshotCache,
+  type ChatSnapshotCache,
+} from './src/chatSnapshotCache';
+import {
   APP_SETTINGS_VERSION,
   DEFAULT_WORKSPACE_CHAT_LIMIT,
   parseAppSettings,
@@ -133,6 +141,7 @@ const DRAWER_MAX_ELEVATION = 18;
 const APP_PREFETCH_DELAY_MS = 0;
 const APP_PREFETCH_CHAT_LIMIT = 5;
 const APP_SETTINGS_FILE = 'clawdex-app-settings.json';
+const CHAT_SNAPSHOT_PERSIST_DELAY_MS = 250;
 const AUTO_STORE_REVIEW_RETRY_MS = 24 * 60 * 60 * 1000;
 
 export default function App() {
@@ -197,6 +206,7 @@ export default function App() {
   const [mainOpeningChatId, setMainOpeningChatId] = useState<string | null>(null);
   const [pendingMainChatId, setPendingMainChatId] = useState<string | null>(null);
   const [pendingMainChatSnapshot, setPendingMainChatSnapshot] = useState<Chat | null>(null);
+  const [chatSnapshotCache, setChatSnapshotCache] = useState<ChatSnapshotCache | null>(null);
   const [settingsAllowsDrawerGesture, setSettingsAllowsDrawerGesture] = useState(true);
   const [drawerCapturesTouches, setDrawerCapturesTouches] = useState(false);
   const [defaultStartCwd, setDefaultStartCwd] = useState<string | null>(null);
@@ -235,6 +245,7 @@ export default function App() {
   const drawerVisibleRef = useRef(false);
   const drawerCapturesTouchesRef = useRef(false);
   const chatTransitionRequestIdRef = useRef(0);
+  const chatSnapshotPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appLifecycleStateRef = useRef(AppState.currentState);
   const activeUsageStartedAtRef = useRef<number | null>(
     AppState.currentState === 'active' ? Date.now() : null
@@ -810,8 +821,25 @@ export default function App() {
           return;
         }
 
+        const activeProfile = getActiveBridgeProfile(profileStore);
+        const snapshotCache = activeProfile
+          ? await loadChatSnapshotCache(activeProfile.id)
+          : null;
+        if (cancelled) {
+          return;
+        }
+        const selectedSnapshot =
+          snapshotCache?.entries.find(
+            (entry) => entry.chat.id === snapshotCache.selectedChatId
+          )?.chat ?? null;
+
         setBridgeProfiles(profileStore.profiles);
         setActiveBridgeProfileId(profileStore.activeProfileId);
+        setChatSnapshotCache(snapshotCache);
+        setSelectedChatId(selectedSnapshot?.id ?? null);
+        setActiveChat(selectedSnapshot);
+        setPendingMainChatId(selectedSnapshot?.id ?? null);
+        setPendingMainChatSnapshot(selectedSnapshot);
         setDefaultStartCwd(parsed.defaultStartCwd);
         setDefaultChatEngine(parsed.defaultChatEngine);
         setDefaultEngineSettings(parsed.defaultEngineSettings);
@@ -855,6 +883,45 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!api || !chatSnapshotCache || chatSnapshotCache.profileId !== activeBridgeProfile?.id) {
+      return;
+    }
+    for (const entry of chatSnapshotCache.entries) {
+      api.rememberChat(entry.chat);
+    }
+  }, [activeBridgeProfile?.id, api, chatSnapshotCache]);
+
+  useEffect(() => {
+    const profileId = activeBridgeProfile?.id;
+    if (!profileId || !settingsLoaded) {
+      return;
+    }
+
+    if (chatSnapshotPersistTimerRef.current) {
+      clearTimeout(chatSnapshotPersistTimerRef.current);
+    }
+    chatSnapshotPersistTimerRef.current = setTimeout(() => {
+      chatSnapshotPersistTimerRef.current = null;
+      setChatSnapshotCache((previous) => {
+        const base =
+          previous?.profileId === profileId
+            ? previous
+            : createEmptyChatSnapshotCache(profileId);
+        const next = updateChatSnapshotCache(base, selectedChatId, activeChat);
+        void saveChatSnapshotCache(next).catch(() => {});
+        return next;
+      });
+    }, CHAT_SNAPSHOT_PERSIST_DELAY_MS);
+
+    return () => {
+      if (chatSnapshotPersistTimerRef.current) {
+        clearTimeout(chatSnapshotPersistTimerRef.current);
+        chatSnapshotPersistTimerRef.current = null;
+      }
+    };
+  }, [activeBridgeProfile?.id, activeChat, selectedChatId, settingsLoaded]);
 
   const dismissKeyboard = useCallback(() => {
     Keyboard.dismiss();
@@ -1580,6 +1647,7 @@ export default function App() {
       setMainOpeningChatId(null);
       setPendingMainChatId(null);
       setPendingMainChatSnapshot(null);
+      setChatSnapshotCache(null);
   }, []);
 
   const handleBridgeProfileSaved = useCallback(
@@ -1599,11 +1667,31 @@ export default function App() {
         bridgeToken: normalizedToken,
         activate: true,
       };
+      const editedProfile = nextDraft.id
+        ? currentBridgeProfileStore.profiles.find((profile) => profile.id === nextDraft.id) ?? null
+        : null;
+      const bridgeIdentityChanged = Boolean(
+        editedProfile &&
+          (editedProfile.bridgeUrl !== normalized || editedProfile.bridgeToken !== normalizedToken)
+      );
       const { store: nextStore } = upsertBridgeProfile(currentBridgeProfileStore, nextDraft);
       await saveBridgeProfileStore(nextStore);
+      if (bridgeIdentityChanged && nextStore.activeProfileId) {
+        await deleteChatSnapshotCache(nextStore.activeProfileId);
+      }
       setBridgeProfiles(nextStore.profiles);
       setActiveBridgeProfileId(nextStore.activeProfileId);
       resetBridgeSessionState();
+      const nextCache = nextStore.activeProfileId && !bridgeIdentityChanged
+        ? await loadChatSnapshotCache(nextStore.activeProfileId)
+        : null;
+      const selectedSnapshot =
+        nextCache?.entries.find((entry) => entry.chat.id === nextCache.selectedChatId)?.chat ?? null;
+      setChatSnapshotCache(nextCache);
+      setSelectedChatId(selectedSnapshot?.id ?? null);
+      setActiveChat(selectedSnapshot);
+      setPendingMainChatId(selectedSnapshot?.id ?? null);
+      setPendingMainChatSnapshot(selectedSnapshot);
       void saveAppSettings(
         defaultStartCwd,
         defaultChatEngine,
@@ -1672,9 +1760,17 @@ export default function App() {
     async (profileId: string) => {
       const nextStore = setActiveBridgeProfile(currentBridgeProfileStore, profileId);
       await saveBridgeProfileStore(nextStore);
+      const nextCache = await loadChatSnapshotCache(profileId);
+      const selectedSnapshot =
+        nextCache.entries.find((entry) => entry.chat.id === nextCache.selectedChatId)?.chat ?? null;
       setBridgeProfiles(nextStore.profiles);
       setActiveBridgeProfileId(nextStore.activeProfileId);
       resetBridgeSessionState();
+      setChatSnapshotCache(nextCache);
+      setSelectedChatId(selectedSnapshot?.id ?? null);
+      setActiveChat(selectedSnapshot);
+      setPendingMainChatId(selectedSnapshot?.id ?? null);
+      setPendingMainChatSnapshot(selectedSnapshot);
     },
     [currentBridgeProfileStore, resetBridgeSessionState]
   );
@@ -1694,11 +1790,22 @@ export default function App() {
       const deletingActiveProfile = activeBridgeProfileId === profileId;
       const nextStore = removeBridgeProfile(currentBridgeProfileStore, profileId);
       await saveBridgeProfileStore(nextStore);
+      await deleteChatSnapshotCache(profileId);
       setBridgeProfiles(nextStore.profiles);
       setActiveBridgeProfileId(nextStore.activeProfileId);
 
       if (deletingActiveProfile) {
         resetBridgeSessionState();
+        const nextCache = nextStore.activeProfileId
+          ? await loadChatSnapshotCache(nextStore.activeProfileId)
+          : null;
+        const selectedSnapshot =
+          nextCache?.entries.find((entry) => entry.chat.id === nextCache.selectedChatId)?.chat ?? null;
+        setChatSnapshotCache(nextCache);
+        setSelectedChatId(selectedSnapshot?.id ?? null);
+        setActiveChat(selectedSnapshot);
+        setPendingMainChatId(selectedSnapshot?.id ?? null);
+        setPendingMainChatSnapshot(selectedSnapshot);
       }
 
       if (nextStore.profiles.length === 0) {
@@ -1712,6 +1819,7 @@ export default function App() {
   );
 
   const handleClearSavedBridges = useCallback(async () => {
+    await Promise.all(bridgeProfiles.map((profile) => deleteChatSnapshotCache(profile.id)));
     await clearBridgeProfileStore();
     setBridgeProfiles([]);
     setActiveBridgeProfileId(null);
@@ -1720,7 +1828,7 @@ export default function App() {
     setOnboardingReturnScreen('Main');
     setCurrentScreen('Onboarding');
     closeDrawer();
-  }, [closeDrawer, resetBridgeSessionState]);
+  }, [bridgeProfiles, closeDrawer, resetBridgeSessionState]);
 
   const handleCancelOnboarding = useCallback(() => {
     setCurrentScreen(onboardingReturnScreen);
@@ -1906,6 +2014,7 @@ export default function App() {
           />
         ) : (
           <MainScreen
+            key={activeBridgeProfile?.id}
             ref={mainRef}
             api={activeApi}
             ws={activeWs}
@@ -1994,6 +2103,7 @@ export default function App() {
       default:
         return (
           <MainScreen
+            key={activeBridgeProfile?.id}
             ref={mainRef}
             api={activeApi}
             ws={activeWs}
@@ -2043,6 +2153,7 @@ export default function App() {
               >
                 <View style={styles.tabletSidebarContent}>
                   <DrawerContent
+                    key={activeBridgeProfile?.id}
                     api={activeApi}
                     ws={activeWs}
                     active
@@ -2094,6 +2205,7 @@ export default function App() {
                         style={[styles.drawerContentShell, drawerContentAnimatedStyle]}
                       >
                         <DrawerContent
+                          key={activeBridgeProfile?.id}
                           api={activeApi}
                           ws={activeWs}
                           active={drawerVisible}
