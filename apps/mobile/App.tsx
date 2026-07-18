@@ -1618,6 +1618,7 @@ export default function App() {
           <GitScreen
             api={activeApi}
             chat={gitChat}
+            approvalMode={approvalMode}
             onBack={handleCloseGit}
             onChatUpdated={handleGitChatUpdated}
           />

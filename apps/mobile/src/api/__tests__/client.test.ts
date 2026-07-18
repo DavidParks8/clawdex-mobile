@@ -1292,6 +1292,11 @@ describe('HostBridgeApiClient', () => {
     const chat = await client.sendChatMessage('thr_1', { content: 'Hello' });
 
     expect(ws.request).toHaveBeenNthCalledWith(2, 'turn/start', expect.any(Object));
+    expect(ws.request).toHaveBeenNthCalledWith(
+      2,
+      'turn/start',
+      expect.objectContaining({ approvalPolicy: 'untrusted' })
+    );
     expect(ws.waitForTurnCompletion).not.toHaveBeenCalled();
     expect(chat.id).toBe('thr_1');
     expect(chat.messages.length).toBeGreaterThan(0);
@@ -1572,6 +1577,28 @@ describe('HostBridgeApiClient', () => {
     );
   });
 
+  it('createChat() sends untrusted approval policy when none is selected', async () => {
+    const ws = createWsMock();
+    ws.request.mockResolvedValueOnce({
+      thread: {
+        id: 'thr_default_policy',
+        preview: '',
+        createdAt: 1700000000,
+        updatedAt: 1700000000,
+        status: { type: 'idle' },
+        turns: [],
+      },
+    });
+
+    const client = new HostBridgeApiClient({ ws: ws as unknown as HostBridgeWsClient });
+    await client.createChat({});
+
+    expect(ws.request).toHaveBeenCalledWith(
+      'thread/start',
+      expect.objectContaining({ approvalPolicy: 'untrusted' })
+    );
+  });
+
   it('createChat() requests danger-full-access sandbox by default', async () => {
     const ws = createWsMock();
     ws.request.mockResolvedValueOnce({
@@ -1642,6 +1669,7 @@ describe('HostBridgeApiClient', () => {
       'thread/fork',
       expect.objectContaining({
         threadId: 'thr_parent',
+        approvalPolicy: 'untrusted',
         config: {
           service_tier: 'fast',
         },
@@ -1659,6 +1687,42 @@ describe('HostBridgeApiClient', () => {
     expect(ws.request).toHaveBeenCalledWith('thread/compact/start', {
       threadId: 'opencode:session-1',
     });
+  });
+
+  it('reviewChat() resumes with an explicit policy before starting review', async () => {
+    const ws = createWsMock();
+    ws.request.mockResolvedValue({});
+
+    const client = new HostBridgeApiClient({ ws: ws as unknown as HostBridgeWsClient });
+    await client.reviewChat('thr_review');
+
+    expect(ws.request).toHaveBeenNthCalledWith(
+      1,
+      'thread/resume',
+      expect.objectContaining({
+        threadId: 'thr_review',
+        approvalPolicy: 'untrusted',
+      })
+    );
+    expect(ws.request).toHaveBeenNthCalledWith(2, 'review/start', {
+      threadId: 'thr_review',
+      target: { type: 'uncommittedChanges' },
+      delivery: 'inline',
+    });
+  });
+
+  it('reviewChat() preserves explicitly selected YOLO policy', async () => {
+    const ws = createWsMock();
+    ws.request.mockResolvedValue({});
+
+    const client = new HostBridgeApiClient({ ws: ws as unknown as HostBridgeWsClient });
+    await client.reviewChat('thr_review_yolo', 'never');
+
+    expect(ws.request).toHaveBeenNthCalledWith(
+      1,
+      'thread/resume',
+      expect.objectContaining({ approvalPolicy: 'never' })
+    );
   });
 
   it('forkChat() requests danger-full-access sandbox by default', async () => {
@@ -1934,6 +1998,7 @@ describe('HostBridgeApiClient', () => {
         content: 'hello',
         turnStart: expect.objectContaining({
           threadId: 'thr_queue',
+          approvalPolicy: 'untrusted',
           input: [
             {
               type: 'text',
@@ -2003,6 +2068,7 @@ describe('HostBridgeApiClient', () => {
         content: 'hello',
         turnStart: expect.objectContaining({
           threadId: 'thr_queue',
+          approvalPolicy: 'untrusted',
           cwd: '/tmp/project',
           model: 'gpt-5.4',
           effort: 'medium',
@@ -2143,26 +2209,19 @@ describe('HostBridgeApiClient', () => {
     );
   });
 
-  it('resumeThread() retries with compatibility payload when modern resume params are rejected', async () => {
+  it('resumeThread() does not retry invalid current-contract parameters', async () => {
     const ws = createWsMock();
-    ws.request
-      .mockRejectedValueOnce(
-        new RpcRequestError(
-          'thread/resume',
-          -32602,
-          'unknown field `experimentalRawEvents`'
-        )
-      )
-      .mockResolvedValueOnce({});
+    const invalidParamsError = new RpcRequestError(
+      'thread/resume',
+      -32602,
+      'unknown field `experimentalRawEvents`'
+    );
+    ws.request.mockRejectedValueOnce(invalidParamsError);
 
     const client = new HostBridgeApiClient({ ws: ws as unknown as HostBridgeWsClient });
-    await expect(client.resumeThread('thr_resume')).resolves.toEqual({
-      model: null,
-      effort: null,
-    });
+    await expect(client.resumeThread('thr_resume')).rejects.toBe(invalidParamsError);
 
-    expect(ws.request).toHaveBeenNthCalledWith(
-      1,
+    expect(ws.request).toHaveBeenCalledWith(
       'thread/resume',
       expect.objectContaining({
         threadId: 'thr_resume',
@@ -2171,113 +2230,35 @@ describe('HostBridgeApiClient', () => {
         sandbox: 'danger-full-access',
       })
     );
-    expect(ws.request).toHaveBeenNthCalledWith(
-      2,
-      'thread/resume',
-      expect.objectContaining({
-        threadId: 'thr_resume',
-        approvalPolicy: 'untrusted',
-        developerInstructions: expect.any(String),
-        sandbox: 'danger-full-access',
-      })
-    );
-    expect(ws.request.mock.calls[1]?.[1]).not.toHaveProperty('experimentalRawEvents');
+    expect(ws.request).toHaveBeenCalledTimes(1);
   });
 
-  it('resumeThread() falls back to legacy payload when compatibility retry is rejected', async () => {
+  it('sendChatMessage() aborts before turn/start when resume fails', async () => {
     const ws = createWsMock();
-    ws.request
-      .mockRejectedValueOnce(
-        new RpcRequestError(
-          'thread/resume',
-          -32602,
-          'unknown field `experimentalRawEvents`'
-        )
-      )
-      .mockRejectedValueOnce(
-        new RpcRequestError('thread/resume', -32602, 'invalid params for resume options')
-      )
-      .mockResolvedValueOnce({});
-
-    const client = new HostBridgeApiClient({ ws: ws as unknown as HostBridgeWsClient });
-    await expect(client.resumeThread('thr_resume_legacy')).resolves.toEqual({
-      model: null,
-      effort: null,
-    });
-
-    expect(ws.request).toHaveBeenNthCalledWith(
-      1,
+    const backendError = new RpcRequestError(
       'thread/resume',
-      expect.objectContaining({
-        threadId: 'thr_resume_legacy',
-        experimentalRawEvents: true,
-        approvalPolicy: 'untrusted',
-        sandbox: 'danger-full-access',
-      })
+      -32603,
+      'app-server unavailable',
+      { backend: 'codex' }
     );
-    expect(ws.request).toHaveBeenNthCalledWith(
-      2,
-      'thread/resume',
-      expect.objectContaining({
-        threadId: 'thr_resume_legacy',
-        approvalPolicy: 'untrusted',
-        developerInstructions: expect.any(String),
-        sandbox: 'danger-full-access',
-      })
-    );
-    expect(ws.request).toHaveBeenNthCalledWith(
-      3,
-      'thread/resume',
-      expect.objectContaining({
-        threadId: 'thr_resume_legacy',
-        approvalPolicy: 'untrusted',
-        developerInstructions: null,
-        sandbox: 'danger-full-access',
-      })
-    );
-
-    const legacyPayload = ws.request.mock.calls[2]?.[1] as Record<string, unknown>;
-    expect(legacyPayload).not.toHaveProperty('experimentalRawEvents');
-  });
-
-  it('resumeThread() keeps never approval policy in legacy retry when explicitly requested', async () => {
-    const ws = createWsMock();
-    ws.request
-      .mockRejectedValueOnce(
-        new RpcRequestError(
-          'thread/resume',
-          -32602,
-          'unknown field `experimentalRawEvents`'
-        )
-      )
-      .mockResolvedValueOnce({});
+    ws.request.mockRejectedValueOnce(backendError);
 
     const client = new HostBridgeApiClient({ ws: ws as unknown as HostBridgeWsClient });
     await expect(
-      client.resumeThread('thr_resume_never', { approvalPolicy: 'never' })
-    ).resolves.toEqual({
-      model: null,
-      effort: null,
-    });
+      client.sendChatMessage('thr_resume_failure', {
+        content: 'do not weaken policy',
+        approvalPolicy: 'never',
+      })
+    ).rejects.toBe(backendError);
 
-    expect(ws.request).toHaveBeenNthCalledWith(
-      1,
+    expect(ws.request).toHaveBeenCalledWith(
       'thread/resume',
       expect.objectContaining({
-        threadId: 'thr_resume_never',
+        threadId: 'thr_resume_failure',
         approvalPolicy: 'never',
-        sandbox: 'danger-full-access',
       })
     );
-    expect(ws.request).toHaveBeenNthCalledWith(
-      2,
-      'thread/resume',
-      expect.objectContaining({
-        threadId: 'thr_resume_never',
-        approvalPolicy: 'never',
-        sandbox: 'danger-full-access',
-      })
-    );
+    expect(ws.request).toHaveBeenCalledTimes(1);
   });
 
   it('resumeThread() does not retry backend failures as compatibility errors', async () => {
@@ -2526,6 +2507,7 @@ describe('HostBridgeApiClient', () => {
       2,
       'turn/start',
       expect.objectContaining({
+        approvalPolicy: 'untrusted',
         model: 'gpt-5.3-codex',
         effort: 'high',
         collaborationMode: {

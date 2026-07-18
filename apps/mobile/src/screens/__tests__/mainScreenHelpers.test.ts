@@ -9,6 +9,7 @@ import {
   parseGoalSlashObjective,
   shouldSurfaceChatLoadError,
   toBridgeUiSurface,
+  toApprovalPolicyForMode,
 } from '../mainScreenHelpers';
 
 describe('mainScreenHelpers', () => {
@@ -46,6 +47,13 @@ describe('mainScreenHelpers', () => {
     expect(shouldSurfaceChatLoadError(false, 'thread-1', 'thread-1', 3)).toBe(true);
     expect(shouldSurfaceChatLoadError(true, 'thread-2', 'thread-1', 3)).toBe(true);
     expect(shouldSurfaceChatLoadError(true, 'thread-1', 'thread-1', 0)).toBe(true);
+  });
+
+  it('maps only explicit YOLO mode to never approvals', () => {
+    expect(toApprovalPolicyForMode(undefined)).toBe('untrusted');
+    expect(toApprovalPolicyForMode(null)).toBe('untrusted');
+    expect(toApprovalPolicyForMode('normal')).toBe('untrusted');
+    expect(toApprovalPolicyForMode('yolo')).toBe('never');
   });
 
   it('keeps successful git clone responses quiet', () => {

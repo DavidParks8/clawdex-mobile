@@ -8,13 +8,27 @@ describe('parseAppSettings', () => {
       bridgeToken: null,
       defaultStartCwd: null,
       defaultChatEngine: 'codex',
-      approvalMode: 'yolo',
+      approvalMode: 'normal',
       showToolCalls: true,
       appearancePreference: 'system',
       darkUiPalette: 'classic',
       fontPreference: DEFAULT_FONT_PREFERENCE,
       workspaceChatLimit: DEFAULT_WORKSPACE_CHAT_LIMIT,
     });
+  });
+
+  it('defaults invalid and missing approval modes to normal', () => {
+    expect(parseAppSettings('{invalid').approvalMode).toBe('normal');
+    expect(parseAppSettings(JSON.stringify({ version: 11 })).approvalMode).toBe('normal');
+    expect(
+      parseAppSettings(JSON.stringify({ version: 11, approvalMode: 'unexpected' })).approvalMode
+    ).toBe('normal');
+  });
+
+  it('preserves an explicit YOLO choice from version 11', () => {
+    expect(
+      parseAppSettings(JSON.stringify({ version: 11, approvalMode: 'yolo' })).approvalMode
+    ).toBe('yolo');
   });
 
   it('defaults showToolCalls to true when unset in stored settings', () => {

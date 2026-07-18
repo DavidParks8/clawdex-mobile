@@ -5068,7 +5068,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
               tone: 'running',
               title: 'Starting review',
             });
-            await api.reviewChat(selectedChatId);
+            await api.reviewChat(selectedChatId, activeApprovalPolicy);
             bumpRunWatchdog();
             setError(null);
           } catch (err) {

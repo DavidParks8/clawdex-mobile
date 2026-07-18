@@ -30,7 +30,7 @@ import {
 } from './fonts';
 import type { AppearancePreference, DarkUiPalette } from './theme';
 
-export const APP_STATE_VERSION = 1;
+export const APP_STATE_VERSION = 2;
 
 export interface AppSettingsState {
   defaultStartCwd: string | null;
@@ -110,7 +110,7 @@ export function createDefaultAppSettings(): AppSettingsState {
     defaultStartCwd: null,
     defaultChatEngine: 'codex',
     defaultEngineSettings: createEmptyEngineDefaultSettingsMap(),
-    approvalMode: 'yolo',
+    approvalMode: 'normal',
     showToolCalls: true,
     workspaceChatLimit: DEFAULT_WORKSPACE_CHAT_LIMIT,
     appearancePreference: 'system',
@@ -204,7 +204,11 @@ export function serializeAppState(data: AppStateData): string {
 export function parsePersistedAppState(raw: string): AppStateData {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== 'object' || parsed.version !== APP_STATE_VERSION) {
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      (parsed.version !== 1 && parsed.version !== APP_STATE_VERSION)
+    ) {
       throw new Error(`Unsupported app-state version: ${String(parsed?.version)}`);
     }
     return normalizeAppStateData({

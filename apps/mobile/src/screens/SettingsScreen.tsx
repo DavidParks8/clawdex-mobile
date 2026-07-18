@@ -41,6 +41,7 @@ import type {
 } from '../api/types';
 import type { HostBridgeWsClient } from '../api/ws';
 import type { AppStatePersistenceError } from '../appState';
+import { selectApprovalModeWithConfirmation } from '../approvalMode';
 import clawdexMark from '../../assets/brand/mark.png';
 import type { BridgeProfile } from '../bridgeProfiles';
 import { BridgeProfileManagerSheet } from '../components/bridge-profile-manager-sheet';
@@ -741,9 +742,13 @@ export function SettingsScreen({
 
   const selectApprovalMode = useCallback(
     (mode: ApprovalMode) => {
-      onApprovalModeChange?.(mode);
       setApprovalModeModalVisible(false);
       setError(null);
+      selectApprovalModeWithConfirmation(
+        mode,
+        (confirmedMode) => onApprovalModeChange?.(confirmedMode),
+        Alert.alert
+      );
     },
     [onApprovalModeChange]
   );

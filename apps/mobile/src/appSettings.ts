@@ -13,7 +13,7 @@ import {
 } from './fonts';
 import type { AppearancePreference, DarkUiPalette } from './theme';
 
-export const APP_SETTINGS_VERSION = 11;
+export const APP_SETTINGS_VERSION = 12;
 export const DEFAULT_WORKSPACE_CHAT_LIMIT = 5;
 export const WORKSPACE_CHAT_LIMIT_OPTIONS = [5, 10, 25, null] as const;
 export type WorkspaceChatLimit = (typeof WORKSPACE_CHAT_LIMIT_OPTIONS)[number];
@@ -39,7 +39,7 @@ export function parseAppSettings(raw: string): {
       defaultStartCwd: null,
       defaultChatEngine: 'codex',
       defaultEngineSettings: createEmptyEngineDefaultSettingsMap(),
-      approvalMode: 'yolo',
+      approvalMode: 'normal',
       showToolCalls: true,
       appearancePreference: 'system',
       darkUiPalette: 'classic',
@@ -65,6 +65,7 @@ export function parseAppSettings(raw: string): {
          parsedVersion !== 8 &&
          parsedVersion !== 9 &&
          parsedVersion !== 10 &&
+         parsedVersion !== 11 &&
          parsedVersion !== APP_SETTINGS_VERSION)
     ) {
       return {
@@ -73,7 +74,7 @@ export function parseAppSettings(raw: string): {
         defaultStartCwd: null,
         defaultChatEngine: 'codex',
         defaultEngineSettings: createEmptyEngineDefaultSettingsMap(),
-        approvalMode: 'yolo',
+        approvalMode: 'normal',
         showToolCalls: true,
         appearancePreference: 'system',
         darkUiPalette: 'classic',
@@ -99,7 +100,7 @@ export function parseAppSettings(raw: string): {
         (parsed as { defaultEngineSettings?: unknown }).defaultEngineSettings,
       legacyDefaultModelId,
       legacyDefaultReasoningEffort,
-      parsedVersion === APP_SETTINGS_VERSION
+      parsedVersion === 11 || parsedVersion === APP_SETTINGS_VERSION
     );
 
     return {
@@ -141,7 +142,7 @@ export function parseAppSettings(raw: string): {
       defaultStartCwd: null,
       defaultChatEngine: 'codex',
       defaultEngineSettings: createEmptyEngineDefaultSettingsMap(),
-      approvalMode: 'yolo',
+      approvalMode: 'normal',
       showToolCalls: true,
       appearancePreference: 'system',
       darkUiPalette: 'classic',
@@ -341,10 +342,6 @@ function normalizeBrowserTargetUrls(value: unknown): string[] {
 }
 
 function normalizeStoredApprovalMode(value: unknown): ApprovalMode {
-  if (typeof value === 'undefined') {
-    return 'yolo';
-  }
-
   return value === 'yolo' ? 'yolo' : 'normal';
 }
 

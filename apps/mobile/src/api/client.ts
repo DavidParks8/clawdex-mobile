@@ -1182,7 +1182,7 @@ export class HostBridgeApiClient {
     }
     const requestedApprovalPolicy =
       normalizeApprovalPolicy(options?.approvalPolicy) ?? 'untrusted';
-    const primaryRequest = {
+    const request = {
       threadId,
       history: null,
       path: null,
@@ -1199,46 +1199,8 @@ export class HostBridgeApiClient {
       persistExtendedHistory: true,
     };
 
-    try {
-      const response = await this.ws.request<Record<string, unknown>>(
-        'thread/resume',
-        primaryRequest
-      );
-      return readThreadRuntimeSettings(response);
-    } catch (primaryError) {
-      if (!isRpcInvalidParamsError(primaryError)) {
-        throw primaryError;
-      }
-
-      // Older app-server builds may reject raw-event streaming on resume.
-      const compatibilityRequest = {
-        ...primaryRequest,
-      };
-      delete (compatibilityRequest as { experimentalRawEvents?: boolean }).experimentalRawEvents;
-      try {
-        const response = await this.ws.request<Record<string, unknown>>(
-          'thread/resume',
-          compatibilityRequest
-        );
-        return readThreadRuntimeSettings(response);
-      } catch (compatibilityError) {
-        if (!isRpcInvalidParamsError(compatibilityError)) {
-          throw compatibilityError;
-        }
-
-        // Final compatibility fallback for older app-server builds that reject
-        // developerInstructions on resume.
-        const legacyRequest = {
-          ...compatibilityRequest,
-          developerInstructions: null,
-        };
-        const response = await this.ws.request<Record<string, unknown>>(
-          'thread/resume',
-          legacyRequest
-        );
-        return readThreadRuntimeSettings(response);
-      }
-    }
+    const response = await this.ws.request<Record<string, unknown>>('thread/resume', request);
+    return readThreadRuntimeSettings(response);
   }
 
   async sendChatMessage(
@@ -1538,7 +1500,8 @@ export class HostBridgeApiClient {
     });
   }
 
-  async reviewChat(id: string): Promise<void> {
+  async reviewChat(id: string, approvalPolicy?: ApprovalPolicy | null): Promise<void> {
+    await this.resumeThread(id, { approvalPolicy });
     await this.ws.request('review/start', {
       threadId: id,
       target: {
@@ -1816,7 +1779,7 @@ export class HostBridgeApiClient {
     const normalizedModel = normalizeModel(body.model);
     const normalizedEffort = normalizeEffort(body.effort);
     const normalizedServiceTier = normalizeServiceTier(body.serviceTier);
-    const normalizedApprovalPolicy = normalizeApprovalPolicy(body.approvalPolicy);
+    const normalizedApprovalPolicy = normalizeApprovalPolicy(body.approvalPolicy) ?? 'untrusted';
     const normalizedMentions = normalizeMentions(body.mentions);
     const normalizedLocalImages = normalizeLocalImages(body.localImages);
     const requestedCollaborationMode = normalizeCollaborationMode(body.collaborationMode);
@@ -1824,15 +1787,11 @@ export class HostBridgeApiClient {
     let resumedThreadSettings: AppServerThreadRuntimeSettings | null = null;
 
     if (!options?.skipResume) {
-      try {
-        resumedThreadSettings = await this.resumeThread(id, {
-          model: normalizedModel,
-          cwd: normalizedCwd,
-          approvalPolicy: normalizedApprovalPolicy,
-        });
-      } catch {
-        // Best effort: turn/start still works for recently started chats.
-      }
+      resumedThreadSettings = await this.resumeThread(id, {
+        model: normalizedModel,
+        cwd: normalizedCwd,
+        approvalPolicy: normalizedApprovalPolicy,
+      });
     }
 
     let effectiveModel = normalizedModel ?? resumedThreadSettings?.model ?? null;
@@ -1868,7 +1827,7 @@ export class HostBridgeApiClient {
         threadId: id,
         input: buildTurnInput(content, normalizedMentions, normalizedLocalImages),
         cwd: normalizedCwd ?? null,
-        approvalPolicy: normalizedApprovalPolicy ?? null,
+        approvalPolicy: normalizedApprovalPolicy,
         sandboxPolicy: null,
         model: effectiveModel ?? null,
         effort: effectiveEffort ?? null,

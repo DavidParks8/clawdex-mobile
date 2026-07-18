@@ -34,7 +34,7 @@ describe('appStateReducer', () => {
 
     expect(toolsChanged.settings.appearancePreference).toBe('light');
     expect(toolsChanged.settings.showToolCalls).toBe(false);
-    expect(toolsChanged.settings.approvalMode).toBe('yolo');
+    expect(toolsChanged.settings.approvalMode).toBe('normal');
   });
 
   it('merges remembered engine settings without replacing other engines', () => {
@@ -66,6 +66,23 @@ describe('app-state persistence format', () => {
     const raw = serializeAppState(createDefaultAppStateData());
     expect(JSON.parse(raw).version).toBe(APP_STATE_VERSION);
     expect(parsePersistedAppState(raw)).toEqual(createDefaultAppStateData());
+  });
+
+  it('migrates version 1 while preserving only an explicit YOLO choice', () => {
+    const base = createDefaultAppStateData();
+    const explicitYolo = JSON.stringify({
+      version: 1,
+      settings: { ...base.settings, approvalMode: 'yolo' },
+      bridgeProfiles: base.bridgeProfiles,
+    });
+    const invalidMode = JSON.stringify({
+      version: 1,
+      settings: { ...base.settings, approvalMode: 'unexpected' },
+      bridgeProfiles: base.bridgeProfiles,
+    });
+
+    expect(parsePersistedAppState(explicitYolo).settings.approvalMode).toBe('yolo');
+    expect(parsePersistedAppState(invalidMode).settings.approvalMode).toBe('normal');
   });
 
   it('rejects unknown versions without falling back and overwriting them', () => {

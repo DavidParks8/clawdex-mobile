@@ -17,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { HostBridgeApiClient } from '../api/client';
 import type {
+  ApprovalMode,
   Chat,
   GitBranchSummary,
   GitHistoryCommit,
@@ -25,6 +26,7 @@ import type {
   GitStatusResponse,
 } from '../api/types';
 import { useAppTheme, type AppTheme } from '../theme';
+import { toApprovalPolicyForMode } from './mainScreenHelpers';
 import {
   parseUnifiedGitDiff,
   type UnifiedDiffFile,
@@ -39,11 +41,12 @@ import {
 interface GitScreenProps {
   api: HostBridgeApiClient;
   chat: Chat;
+  approvalMode?: ApprovalMode;
   onBack: () => void;
   onChatUpdated?: (chat: Chat) => void;
 }
 
-export function GitScreen({ api, chat, onBack, onChatUpdated }: GitScreenProps) {
+export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: GitScreenProps) {
   const theme = useAppTheme();
   const [activeChat, setActiveChat] = useState(chat);
   const [status, setStatus] = useState<GitStatusResponse | null>(null);
@@ -642,6 +645,7 @@ export function GitScreen({ api, chat, onBack, onChatUpdated }: GitScreenProps) 
       const result = await api.sendOrQueueChatMessage(activeChat.id, {
         content: buildGitReviewPrompt(reviewComments, requestedCwd),
         cwd: requestedCwd,
+        approvalPolicy: toApprovalPolicyForMode(approvalMode),
       });
       if (result.chat) {
         setActiveChat(result.chat);
@@ -655,7 +659,7 @@ export function GitScreen({ api, chat, onBack, onChatUpdated }: GitScreenProps) 
     } finally {
       setSubmittingReview(false);
     }
-  }, [activeChat.id, api, onBack, onChatUpdated, requestedCwd, reviewComments, submittingReview]);
+  }, [activeChat.id, api, approvalMode, onBack, onChatUpdated, requestedCwd, reviewComments, submittingReview]);
 
   useEffect(() => {
     return () => {
