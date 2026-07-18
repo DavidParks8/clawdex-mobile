@@ -81,6 +81,34 @@ describe('WorkspacePickerModal', () => {
     });
   });
 
+  it('exposes modal, selected, and disabled workspace controls', () => {
+    let rendered: ReactTestRenderer | undefined;
+    act(() => {
+      rendered = renderer.create(
+        renderPicker({
+          onBrowsePath: jest.fn(),
+          onSelectPath: jest.fn(),
+          currentPath: githubPath,
+          parentPath: githubPath,
+          entries: [directoryEntry('serious-projects', seriousProjectsPath)],
+        })
+      );
+    });
+
+    const root = expectValue(rendered).root as QueryableTestInstance;
+    expect(root.findAll((node) => node.props.accessibilityViewIsModal === true).length)
+      .toBeGreaterThan(0);
+    expect(root.findAll((node) => node.props.accessibilityLabel === 'Close workspace picker').length)
+      .toBeGreaterThan(0);
+    expect(
+      root.findAll((node) => node.props.accessibilityLabel === 'Use default workspace')[0]?.props
+        .accessibilityState
+    ).toEqual({ disabled: false, selected: false });
+    act(() => {
+      expectValue(rendered).unmount();
+    });
+  });
+
   function renderPicker({
     onBrowsePath,
     onSelectPath,

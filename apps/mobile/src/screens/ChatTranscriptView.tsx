@@ -36,6 +36,7 @@ import {
   type TranscriptDisplayItem,
 } from './transcriptMessages';
 import { projectTranscript } from './controllers/transcriptProjectionController';
+import { decorativeAccessibilityProps } from '../accessibility';
 
 export interface ChatTranscriptViewProps {
   chat: Chat;
@@ -264,6 +265,9 @@ export const ChatTranscriptView = memo(function ChatTranscriptView({
                     pressed && styles.inlineChoiceOptionButtonPressed,
                   ]}
                   onPress={() => onInlineOptionSelect(option.label)}
+                  accessibilityRole="button"
+                  accessibilityLabel={option.label}
+                  accessibilityHint={option.description || 'Fills the reply box with this answer'}
                 >
                   <View style={styles.inlineChoiceOptionRow}>
                     <Text style={styles.inlineChoiceOptionIndex}>{`${String(index + 1)}.`}</Text>
@@ -348,6 +352,7 @@ export const ChatTranscriptView = memo(function ChatTranscriptView({
         updateCellsBatchingPeriod={isLargeChat ? 32 : undefined}
         windowSize={isLargeChat ? 13 : 11}
         removeClippedSubviews={false}
+        accessibilityLabel={`${chat.title || 'Chat'} transcript`}
       />
       {showJumpToLatest ? (
         <Pressable
@@ -364,8 +369,11 @@ export const ChatTranscriptView = memo(function ChatTranscriptView({
             { bottom: bottomInset + theme.spacing.xs },
             pressed && styles.jumpToLatestButtonPressed,
           ]}
+          accessibilityRole="button"
+          accessibilityLabel="Jump to latest message"
         >
           <Ionicons
+            {...decorativeAccessibilityProps}
             name="arrow-down"
             size={14}
             color={theme.colors.textPrimary}

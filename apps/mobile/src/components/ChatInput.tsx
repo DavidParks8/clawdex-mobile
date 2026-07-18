@@ -16,6 +16,7 @@ import {
 
 import { resolveComposerBottomSpacing } from './chat-input-layout';
 import { useAppTheme, type AppTheme } from '../theme';
+import { controlAccessibilityState, decorativeAccessibilityProps } from '../accessibility';
 
 interface ChatInputProps {
   value: string;
@@ -125,13 +126,16 @@ export function ChatInput({
                     styles.attachmentChip,
                     pressed && styles.attachmentChipPressed,
                   ]}
+                  accessibilityRole={onRemoveAttachment ? 'button' : undefined}
+                  accessibilityLabel={`${attachment.label}${onRemoveAttachment ? ', remove attachment' : ''}`}
+                  accessibilityHint={onRemoveAttachment ? 'Removes this attachment from the message' : undefined}
                 >
-                  <Ionicons name="attach-outline" size={12} color={colors.textMuted} />
+                  <Ionicons {...decorativeAccessibilityProps} name="attach-outline" size={12} color={colors.textMuted} />
                   <Text style={styles.attachmentChipText} numberOfLines={1}>
                     {attachment.label}
                   </Text>
                   {onRemoveAttachment ? (
-                    <Ionicons name="close-outline" size={12} color={colors.textMuted} />
+                    <Ionicons {...decorativeAccessibilityProps} name="close-outline" size={12} color={colors.textMuted} />
                   ) : null}
                 </Pressable>
               ))}
@@ -148,8 +152,12 @@ export function ChatInput({
                 attachDisabled && styles.plusBtnDisabled,
                 pressed && !attachDisabled && styles.plusBtnPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel="Add attachment"
+              accessibilityHint="Opens attachment choices"
+              accessibilityState={controlAccessibilityState({ disabled: attachDisabled })}
             >
-              <Ionicons name="add" size={21} color={colors.textPrimary} />
+              <Ionicons {...decorativeAccessibilityProps} name="add" size={21} color={colors.textPrimary} />
             </Pressable>
 
             <View style={styles.inputWrapper}>
@@ -192,6 +200,8 @@ export function ChatInput({
               placeholder={placeholder}
               placeholderTextColor={colors.textMuted}
               multiline
+              accessibilityLabel="Message"
+              accessibilityHint="Enter a message for the agent"
               scrollEnabled={inputScrollEnabled}
               onKeyPress={(e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
                 const keyEvent = e.nativeEvent as TextInputKeyPressEventData & {
@@ -216,9 +226,13 @@ export function ChatInput({
                     disabled={isStopping}
                     hitSlop={ACTION_BUTTON_HIT_SLOP}
                     pressRetentionOffset={ACTION_BUTTON_PRESS_RETENTION_OFFSET}
+                    accessibilityRole="button"
+                    accessibilityLabel={isStopping ? 'Stopping agent' : 'Stop agent'}
+                    accessibilityHint="Stops the current turn"
+                    accessibilityState={controlAccessibilityState({ disabled: isStopping, busy: isStopping })}
                   >
                     <View style={styles.stopButtonContent}>
-                      <Ionicons name="square" size={10} color={colors.textPrimary} />
+                      <Ionicons {...decorativeAccessibilityProps} name="square" size={10} color={colors.textPrimary} />
                       <ActivityIndicator
                         size="small"
                         color={colors.textMuted}
@@ -234,6 +248,10 @@ export function ChatInput({
                     disabled={!canSend}
                     hitSlop={ACTION_BUTTON_HIT_SLOP}
                     pressRetentionOffset={ACTION_BUTTON_PRESS_RETENTION_OFFSET}
+                    accessibilityRole="button"
+                    accessibilityLabel={isLoading && !canSend ? 'Agent is responding' : 'Send message'}
+                    accessibilityHint="Sends the current message"
+                    accessibilityState={controlAccessibilityState({ disabled: !canSend, busy: isLoading && !canSend })}
                   >
                     {isLoading && !canSend ? (
                       <ActivityIndicator
@@ -242,6 +260,7 @@ export function ChatInput({
                       />
                     ) : (
                       <Ionicons
+                        {...decorativeAccessibilityProps}
                         name="arrow-up"
                         size={14}
                         color={submitUsesPrimaryChrome ? colors.accentText : colors.textPrimary}

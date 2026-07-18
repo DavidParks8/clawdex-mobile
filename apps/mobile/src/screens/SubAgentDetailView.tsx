@@ -17,6 +17,12 @@ import type { AgentThreadDisplayState } from './agentThreadDisplay';
 import type { TranscriptDisplayItem } from './transcriptMessages';
 import { ChatTranscriptView } from './ChatTranscriptView';
 import { useAppTheme, type AppTheme } from '../theme';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+  useModalAccessibilityFocus,
+} from '../accessibility';
 
 interface SubAgentDetailViewProps {
   visible: boolean;
@@ -68,34 +74,45 @@ export function SubAgentDetailView({
   const latestCommand: RunEvent | null =
     runtime?.latestCommand ?? runtime?.activeCommands?.at(-1) ?? null;
   const activityDetail = display?.detail ?? latestCommand?.detail ?? role?.trim() ?? null;
+  const modalFocusRef = useModalAccessibilityFocus(visible);
+  useAccessibilityAnnouncement(visible ? error ?? (loading ? 'Loading agent transcript' : null) : null);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView accessibilityViewIsModal importantForAccessibility="yes" style={styles.container}>
         <View style={styles.header}>
-          <Pressable onPress={onClose} hitSlop={8} style={styles.iconButton}>
-            <Ionicons name="chevron-back" size={22} color={theme.colors.textPrimary} />
+          <Pressable onPress={onClose} hitSlop={8} style={styles.iconButton} accessibilityRole="button" accessibilityLabel="Close sub-agent transcript">
+            <Ionicons {...decorativeAccessibilityProps} name="chevron-back" size={22} color={theme.colors.textPrimary} />
           </Pressable>
           <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>Sub-agent</Text>
-            <Text style={styles.title} numberOfLines={1}>{title}</Text>
+            <Text ref={modalFocusRef} accessibilityRole="header" style={styles.title} numberOfLines={1}>{title}</Text>
           </View>
-          <Pressable onPress={onRefresh} hitSlop={8} style={styles.iconButton}>
+          <Pressable
+            onPress={onRefresh}
+            hitSlop={8}
+            style={styles.iconButton}
+            disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh sub-agent transcript"
+            accessibilityState={controlAccessibilityState({ disabled: loading, busy: loading })}
+          >
             {loading ? (
               <ActivityIndicator size="small" color={theme.colors.textMuted} />
             ) : (
-              <Ionicons name="refresh" size={18} color={theme.colors.textMuted} />
+              <Ionicons {...decorativeAccessibilityProps} name="refresh" size={18} color={theme.colors.textMuted} />
             )}
           </Pressable>
         </View>
 
-        <View style={styles.statusBar}>
+        <View style={styles.statusBar} accessibilityLiveRegion="polite">
           <View style={styles.statusCopy}>
             <View style={styles.statusTitleRow}>
               {display?.isActive ? (
                 <ActivityIndicator size="small" color={display.statusColor} />
               ) : (
                 <Ionicons
+                  {...decorativeAccessibilityProps}
                   name={display?.icon ?? 'ellipse-outline'}
                   size={15}
                   color={display?.statusColor ?? theme.colors.textMuted}
@@ -114,13 +131,13 @@ export function SubAgentDetailView({
               <Text style={styles.activityDetail} numberOfLines={2}>{activityDetail}</Text>
             ) : null}
           </View>
-          <Pressable onPress={onOpenAsChat} style={styles.openChatButton}>
+          <Pressable onPress={onOpenAsChat} style={styles.openChatButton} accessibilityRole="button" accessibilityLabel="Open sub-agent as chat">
             <Text style={styles.openChatButtonText}>Open as chat</Text>
-            <Ionicons name="open-outline" size={14} color={theme.colors.textPrimary} />
+            <Ionicons {...decorativeAccessibilityProps} name="open-outline" size={14} color={theme.colors.textPrimary} />
           </Pressable>
         </View>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorText}>{error}</Text> : null}
 
         <View style={styles.transcript}>
           {chat ? (
@@ -149,7 +166,7 @@ export function SubAgentDetailView({
               liveAssistantText={runtime?.streamingText ?? null}
             />
           ) : (
-            <View style={styles.loadingShell}>
+            <View style={styles.loadingShell} accessibilityRole="progressbar" accessibilityLabel="Loading agent transcript">
               <ActivityIndicator color={theme.colors.textMuted} />
               <Text style={styles.loadingText}>Loading agent transcript…</Text>
             </View>

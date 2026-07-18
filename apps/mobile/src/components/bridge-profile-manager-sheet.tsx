@@ -17,6 +17,12 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import type { BridgeProfile } from '../bridgeProfiles';
 import { useAppTheme, type AppTheme } from '../theme';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+  useModalAccessibilityFocus,
+} from '../accessibility';
 
 interface BridgeProfileManagerSheetProps {
   visible: boolean;
@@ -46,6 +52,8 @@ export function BridgeProfileManagerSheet({
   const [pendingDeleteProfileId, setPendingDeleteProfileId] = useState<string | null>(null);
   const [actionProfileId, setActionProfileId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const modalFocusRef = useModalAccessibilityFocus(visible);
+  useAccessibilityAnnouncement(visible ? actionError : null);
 
   useEffect(() => {
     if (!visible) {
@@ -138,25 +146,25 @@ export function BridgeProfileManagerSheet({
       onRequestClose={onClose}
     >
       <View style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close connection manager" />
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.keyboardAvoider}
         >
           <SafeAreaView edges={['bottom']} style={styles.safeArea}>
-            <View style={[styles.sheetCard, { maxHeight: cardMaxHeight }]}>
-              <View style={styles.handle} />
+            <View accessibilityViewIsModal importantForAccessibility="yes" style={[styles.sheetCard, { maxHeight: cardMaxHeight }]}>
+              <View {...decorativeAccessibilityProps} style={styles.handle} />
               <View style={styles.header}>
                 <Text style={styles.eyebrow}>Saved Connections</Text>
-                <Text style={styles.title}>Manage connections</Text>
+                <Text ref={modalFocusRef} accessibilityRole="header" style={styles.title}>Manage connections</Text>
                 <Text style={styles.subtitle}>
                   Switch the active connection, rename it, or remove old entries.
                 </Text>
               </View>
 
               {actionError ? (
-                <View style={styles.errorBanner}>
-                  <Ionicons name="alert-circle-outline" size={16} color={theme.colors.error} />
+                <View accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorBanner}>
+                  <Ionicons {...decorativeAccessibilityProps} name="alert-circle-outline" size={16} color={theme.colors.error} />
                   <Text selectable style={styles.errorBannerText}>
                     {actionError}
                   </Text>
@@ -180,6 +188,8 @@ export function BridgeProfileManagerSheet({
                       <View
                         key={profile.id}
                         style={[styles.profileRow, isActive && styles.profileRowActive]}
+                        accessible
+                        accessibilityLabel={`${profile.name}. ${profile.bridgeUrl}. ${isActive ? 'Active connection' : 'Saved connection'}`}
                       >
                         <View style={styles.profileHeader}>
                           <View style={styles.profileCopy}>
@@ -204,12 +214,13 @@ export function BridgeProfileManagerSheet({
                           </View>
 
                           {isBusy ? (
-                            <View style={styles.activateButton}>
+                            <View style={styles.activateButton} accessibilityRole="progressbar" accessibilityLabel={`Updating ${profile.name}`}>
                               <ActivityIndicator size="small" color={theme.colors.textPrimary} />
                             </View>
                           ) : isActive ? (
                             <View style={styles.activeState}>
                               <Ionicons
+                                {...decorativeAccessibilityProps}
                                 name="checkmark-circle-outline"
                                 size={18}
                                 color={theme.colors.statusComplete}
@@ -224,6 +235,8 @@ export function BridgeProfileManagerSheet({
                                 styles.activateButton,
                                 pressed && styles.activateButtonPressed,
                               ]}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Use ${profile.name}`}
                             >
                               <Text style={styles.activateButtonText}>Use</Text>
                             </Pressable>
@@ -238,8 +251,11 @@ export function BridgeProfileManagerSheet({
                                 styles.toolButton,
                                 pressed && styles.toolButtonPressed,
                               ]}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Rename ${profile.name}`}
                             >
                               <Ionicons
+                                {...decorativeAccessibilityProps}
                                 name="create-outline"
                                 size={14}
                                 color={theme.colors.textPrimary}
@@ -257,8 +273,10 @@ export function BridgeProfileManagerSheet({
                                 styles.toolButtonDanger,
                                 pressed && styles.toolButtonDangerPressed,
                               ]}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Delete ${profile.name}`}
                             >
-                              <Ionicons name="trash-outline" size={14} color={theme.colors.error} />
+                              <Ionicons {...decorativeAccessibilityProps} name="trash-outline" size={14} color={theme.colors.error} />
                               <Text style={styles.toolButtonDangerText}>Delete</Text>
                             </Pressable>
                           </View>
@@ -278,6 +296,7 @@ export function BridgeProfileManagerSheet({
                                 void saveRename();
                               }}
                               style={styles.inlineInput}
+                              accessibilityLabel="Connection name"
                             />
                             <View style={styles.inlineActions}>
                               <Pressable
@@ -287,6 +306,8 @@ export function BridgeProfileManagerSheet({
                                   styles.inlineButtonSecondary,
                                   pressed && styles.inlineButtonPressed,
                                 ]}
+                                accessibilityRole="button"
+                                accessibilityLabel="Cancel rename"
                               >
                                 <Text style={styles.inlineButtonSecondaryText}>Cancel</Text>
                               </Pressable>
@@ -301,6 +322,8 @@ export function BridgeProfileManagerSheet({
                                   pressed && !isBusy && styles.inlineButtonPrimaryPressed,
                                   (!renameDraft.trim() || isBusy) && styles.inlineButtonDisabled,
                                 ]}
+                                accessibilityRole="button"
+                                accessibilityState={controlAccessibilityState({ disabled: !renameDraft.trim() || isBusy, busy: isBusy })}
                               >
                                 <Text style={styles.inlineButtonPrimaryText}>Save name</Text>
                               </Pressable>
@@ -309,7 +332,7 @@ export function BridgeProfileManagerSheet({
                         ) : null}
 
                         {isPendingDelete ? (
-                          <View style={styles.deleteConfirm}>
+                          <View style={styles.deleteConfirm} accessibilityLiveRegion="assertive">
                             <Text style={styles.deleteConfirmTitle}>Delete this profile?</Text>
                             <Text style={styles.deleteConfirmBody}>
                               This removes the saved connection from the device. If it is active,
@@ -324,6 +347,7 @@ export function BridgeProfileManagerSheet({
                                   styles.inlineButtonSecondary,
                                   pressed && styles.inlineButtonPressed,
                                 ]}
+                                accessibilityRole="button"
                               >
                                 <Text style={styles.inlineButtonSecondaryText}>Keep profile</Text>
                               </Pressable>
@@ -338,6 +362,9 @@ export function BridgeProfileManagerSheet({
                                   pressed && !isBusy && styles.deleteButtonPressed,
                                   isBusy && styles.inlineButtonDisabled,
                                 ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Delete ${profile.name}`}
+                                accessibilityState={controlAccessibilityState({ disabled: isBusy, busy: isBusy })}
                               >
                                 <Text style={styles.deleteButtonText}>Delete</Text>
                               </Pressable>
@@ -360,6 +387,7 @@ export function BridgeProfileManagerSheet({
               <Pressable
                 onPress={onClose}
                 style={({ pressed }) => [styles.closeButton, pressed && styles.closeButtonPressed]}
+                accessibilityRole="button"
               >
                 <Text style={styles.closeButtonText}>Done</Text>
               </Pressable>

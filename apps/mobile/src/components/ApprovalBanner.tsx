@@ -5,6 +5,11 @@ import { useMemo, useState } from 'react';
 
 import type { ApprovalDecision, PendingApproval } from '../api/types';
 import { useAppTheme, type AppTheme } from '../theme';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+} from '../accessibility';
 
 interface ApprovalBannerProps {
   approval: PendingApproval;
@@ -32,11 +37,18 @@ export function ApprovalBanner({ approval, onResolve }: ApprovalBannerProps) {
     approval.kind === 'commandExecution' &&
     Array.isArray(approval.proposedExecpolicyAmendment) &&
     approval.proposedExecpolicyAmendment.length > 0;
+  useAccessibilityAnnouncement(
+    resolving ? `Resolving approval: ${resolving}` : `Approval requested. ${label}`
+  );
 
   return (
-    <Animated.View entering={FadeInDown.duration(250)} style={styles.container}>
+    <Animated.View
+      entering={FadeInDown.duration(250)}
+      style={styles.container}
+      accessibilityLiveRegion="assertive"
+    >
       <View style={styles.header}>
-        <Ionicons name="shield-checkmark-outline" size={16} color={colors.accent} />
+        <Ionicons {...decorativeAccessibilityProps} name="shield-checkmark-outline" size={16} color={colors.accent} />
         <Text style={styles.title}>Approval requested</Text>
       </View>
 
@@ -53,12 +65,16 @@ export function ApprovalBanner({ approval, onResolve }: ApprovalBannerProps) {
           style={({ pressed }) => [styles.btn, styles.denyBtn, pressed && styles.btnPressed]}
           onPress={() => void handleResolve('decline')}
           disabled={resolving !== null}
+          accessibilityRole="button"
+          accessibilityLabel="Deny approval"
+          accessibilityHint="Rejects this request"
+          accessibilityState={controlAccessibilityState({ disabled: resolving !== null, busy: resolving === 'decline' })}
         >
           {resolving === 'decline' ? (
             <ActivityIndicator size="small" color={colors.error} />
           ) : (
             <>
-              <Ionicons name="close" size={14} color={colors.error} />
+              <Ionicons {...decorativeAccessibilityProps} name="close" size={14} color={colors.error} />
               <Text style={[styles.btnText, { color: colors.error }]}>Deny</Text>
             </>
           )}
@@ -68,12 +84,16 @@ export function ApprovalBanner({ approval, onResolve }: ApprovalBannerProps) {
           style={({ pressed }) => [styles.btn, styles.acceptBtn, pressed && styles.btnPressed]}
           onPress={() => void handleResolve('accept')}
           disabled={resolving !== null}
+          accessibilityRole="button"
+          accessibilityLabel="Allow once"
+          accessibilityHint="Allows only this request"
+          accessibilityState={controlAccessibilityState({ disabled: resolving !== null, busy: resolving === 'accept' })}
         >
           {resolving === 'accept' ? (
             <ActivityIndicator size="small" color={colors.textPrimary} />
           ) : (
             <>
-              <Ionicons name="checkmark" size={14} color={colors.textPrimary} />
+              <Ionicons {...decorativeAccessibilityProps} name="checkmark" size={14} color={colors.textPrimary} />
               <Text style={[styles.btnText, { color: colors.textPrimary }]}>Allow once</Text>
             </>
           )}
@@ -83,12 +103,16 @@ export function ApprovalBanner({ approval, onResolve }: ApprovalBannerProps) {
           style={({ pressed }) => [styles.btn, styles.acceptBtn, pressed && styles.btnPressed]}
           onPress={() => void handleResolve('acceptForSession')}
           disabled={resolving !== null}
+          accessibilityRole="button"
+          accessibilityLabel="Allow for session"
+          accessibilityHint="Allows this request for the current session"
+          accessibilityState={controlAccessibilityState({ disabled: resolving !== null, busy: resolving === 'acceptForSession' })}
         >
           {resolving === 'acceptForSession' ? (
             <ActivityIndicator size="small" color={colors.textPrimary} />
           ) : (
             <>
-              <Ionicons name="time-outline" size={14} color={colors.textPrimary} />
+              <Ionicons {...decorativeAccessibilityProps} name="time-outline" size={14} color={colors.textPrimary} />
               <Text style={[styles.btnText, { color: colors.textPrimary }]}>Session</Text>
             </>
           )}
@@ -110,12 +134,16 @@ export function ApprovalBanner({ approval, onResolve }: ApprovalBannerProps) {
               })
             }
             disabled={resolving !== null}
+            accessibilityRole="button"
+            accessibilityLabel="Allow similar commands"
+            accessibilityHint="Allows commands matching the proposed execution policy"
+            accessibilityState={controlAccessibilityState({ disabled: resolving !== null, busy: resolving === 'acceptWithExecpolicyAmendment' })}
           >
             {resolving === 'acceptWithExecpolicyAmendment' ? (
               <ActivityIndicator size="small" color={colors.textPrimary} />
             ) : (
               <>
-                <Ionicons name="flash-outline" size={14} color={colors.textPrimary} />
+                <Ionicons {...decorativeAccessibilityProps} name="flash-outline" size={14} color={colors.textPrimary} />
                 <Text style={[styles.btnText, { color: colors.textPrimary }]}>Allow similar</Text>
               </>
             )}

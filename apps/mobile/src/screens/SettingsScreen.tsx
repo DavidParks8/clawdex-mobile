@@ -93,6 +93,11 @@ import {
   canOpenAppStoreWriteReviewPage,
   openAppStoreWriteReviewPage,
 } from '../storeReview';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+} from '../accessibility';
 
 interface SettingsScreenProps {
   api: HostBridgeApiClient;
@@ -247,6 +252,9 @@ export function SettingsScreen({
   const [tipPaywallOpening, setTipPaywallOpening] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
+  useAccessibilityAnnouncement(
+    persistenceError?.message ?? pushError ?? error ?? accountError ?? rateLimitsError
+  );
   const [route, setRoute] = useState<SettingsRoute>('home');
   const [routeTransitionDirection, setRouteTransitionDirection] =
     useState<SettingsRouteTransitionDirection>('forward');
@@ -1163,7 +1171,7 @@ export function SettingsScreen({
               {approvalModeLabel}
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={16} color={colors.textMuted} />
         </Pressable>
       </BlurView>
       <Text style={styles.subtleHintText}>
@@ -1187,6 +1195,7 @@ export function SettingsScreen({
             trackColor={{ false: transcriptSwitchTrackColor, true: transcriptSwitchActiveColor }}
             thumbColor={transcriptSwitchThumbColor}
             ios_backgroundColor={transcriptSwitchTrackColor}
+            accessibilityLabel="Show tool calls"
           />
         </View>
       </BlurView>
@@ -1211,7 +1220,7 @@ export function SettingsScreen({
               {workspaceChatLimitLabel}
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={16} color={colors.textMuted} />
         </Pressable>
       </BlurView>
 
@@ -1233,6 +1242,7 @@ export function SettingsScreen({
               trackColor={{ false: transcriptSwitchTrackColor, true: transcriptSwitchActiveColor }}
               thumbColor={transcriptSwitchThumbColor}
               ios_backgroundColor={transcriptSwitchTrackColor}
+              accessibilityLabel="Push notifications"
             />
           )}
         </View>
@@ -1250,6 +1260,7 @@ export function SettingsScreen({
             trackColor={{ false: transcriptSwitchTrackColor, true: transcriptSwitchActiveColor }}
             thumbColor={transcriptSwitchThumbColor}
             ios_backgroundColor={transcriptSwitchTrackColor}
+            accessibilityLabel="Turn finished notifications"
           />
         </View>
         <View
@@ -1272,6 +1283,7 @@ export function SettingsScreen({
             trackColor={{ false: transcriptSwitchTrackColor, true: transcriptSwitchActiveColor }}
             thumbColor={transcriptSwitchThumbColor}
             ios_backgroundColor={transcriptSwitchTrackColor}
+            accessibilityLabel="Approval needed notifications"
           />
         </View>
       </BlurView>
@@ -1280,7 +1292,7 @@ export function SettingsScreen({
         short preview of the agent&apos;s reply (its first line) plus the project name, so reply
         text leaves your network via Expo and Apple when notifications are on.
       </Text>
-      {pushError ? <Text style={styles.errorText}>{pushError}</Text> : null}
+      {pushError ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorText}>{pushError}</Text> : null}
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </>
@@ -1291,6 +1303,8 @@ export function SettingsScreen({
       <Text style={styles.sectionLabel}>Theme</Text>
       <BlurView intensity={50} tint={theme.blurTint} style={styles.card}>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Light or dark appearance, ${appearancePreferenceLabel}`}
           onPress={() => setAppearanceModalVisible(true)}
           style={({ pressed }) => [
             styles.settingRow,
@@ -1303,9 +1317,11 @@ export function SettingsScreen({
               {appearancePreferenceLabel}
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={16} color={colors.textMuted} />
         </Pressable>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Dark palette, ${darkUiPaletteLabel}`}
           onPress={() => setDarkPaletteModalVisible(true)}
           style={({ pressed }) => [
             styles.settingRow,
@@ -1318,9 +1334,11 @@ export function SettingsScreen({
               {darkUiPaletteLabel}
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={16} color={colors.textMuted} />
         </Pressable>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Typography, ${fontPreferenceLabel}`}
           onPress={() => setFontModalVisible(true)}
           style={({ pressed }) => [
             styles.settingRow,
@@ -1334,7 +1352,7 @@ export function SettingsScreen({
               {fontPreferenceLabel}
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={16} color={colors.textMuted} />
         </Pressable>
       </BlurView>
       <Text style={styles.subtleHintText}>
@@ -1349,7 +1367,7 @@ export function SettingsScreen({
       <Text style={styles.sectionLabel}>Account</Text>
       <BlurView intensity={50} tint={theme.blurTint} style={styles.card}>
         {accountLoading ? (
-          <View style={styles.accountLoadingState}>
+          <View style={styles.accountLoadingState} accessibilityRole="progressbar" accessibilityLabel="Loading account details">
             <ActivityIndicator color={colors.textPrimary} />
             <Text style={styles.settingValue}>Loading account details…</Text>
           </View>
@@ -1376,7 +1394,7 @@ export function SettingsScreen({
       <Text style={styles.sectionLabel}>Codex Usage Limits</Text>
       <BlurView intensity={50} tint={theme.blurTint} style={styles.card}>
         {rateLimitsLoading ? (
-          <View style={styles.accountLoadingState}>
+          <View style={styles.accountLoadingState} accessibilityRole="progressbar" accessibilityLabel="Loading usage limits">
             <ActivityIndicator color={colors.textPrimary} />
             <Text style={styles.settingValue}>Loading usage limits…</Text>
           </View>
@@ -1461,12 +1479,15 @@ export function SettingsScreen({
         <Pressable
           onPress={() => setShowConnectionTroubleshooting((current) => !current)}
           style={({ pressed }) => [styles.linkRow, pressed && styles.linkRowPressed]}
+          accessibilityRole="button"
+          accessibilityState={controlAccessibilityState({ expanded: showConnectionTroubleshooting })}
         >
           <View style={styles.linkRowLeft}>
-            <Ionicons name="construct-outline" size={16} color={colors.textPrimary} />
+            <Ionicons {...decorativeAccessibilityProps} name="construct-outline" size={16} color={colors.textPrimary} />
             <Text style={styles.linkRowLabel}>Connection tools</Text>
           </View>
           <Ionicons
+            {...decorativeAccessibilityProps}
             name={showConnectionTroubleshooting ? 'chevron-up' : 'chevron-down'}
             size={16}
             color={colors.textMuted}
@@ -1928,16 +1949,16 @@ export function SettingsScreen({
       <SafeAreaView edges={['top']} style={styles.safeArea}>
         <View style={styles.header}>
           {route === 'home' ? (
-            <Pressable onPress={onOpenDrawer} hitSlop={8} style={styles.menuBtn}>
-              <Ionicons name="menu" size={22} color={colors.textPrimary} />
+            <Pressable onPress={onOpenDrawer} hitSlop={8} style={styles.menuBtn} accessibilityRole="button" accessibilityLabel="Open navigation drawer">
+              <Ionicons {...decorativeAccessibilityProps} name="menu" size={22} color={colors.textPrimary} />
             </Pressable>
           ) : (
-            <Pressable onPress={handleReturnToSettingsHome} hitSlop={8} style={styles.menuBtn}>
-              <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+            <Pressable onPress={handleReturnToSettingsHome} hitSlop={8} style={styles.menuBtn} accessibilityRole="button" accessibilityLabel="Back to settings">
+              <Ionicons {...decorativeAccessibilityProps} name="chevron-back" size={22} color={colors.textPrimary} />
             </Pressable>
           )}
-          <Ionicons name={headerIcon} size={16} color={colors.textPrimary} />
-          <Text style={styles.headerTitle}>{headerTitle}</Text>
+          <Ionicons {...decorativeAccessibilityProps} name={headerIcon} size={16} color={colors.textPrimary} />
+          <Text accessibilityRole="header" style={styles.headerTitle}>{headerTitle}</Text>
         </View>
 
         <ScrollView
@@ -1953,9 +1974,9 @@ export function SettingsScreen({
         >
           <Animated.View style={[styles.routeContent, routeContentAnimatedStyle]}>
             {persistenceError ? (
-              <View style={styles.persistenceErrorBanner}>
+              <View accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.persistenceErrorBanner}>
                 <View style={styles.persistenceErrorCopy}>
-                  <Ionicons name="alert-circle-outline" size={16} color={colors.error} />
+                  <Ionicons {...decorativeAccessibilityProps} name="alert-circle-outline" size={16} color={colors.error} />
                   <Text selectable style={styles.persistenceErrorText}>
                     {persistenceError.message}
                   </Text>
@@ -2109,6 +2130,8 @@ function MenuEntry({
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${description}`}
       style={({ pressed }) => [
         styles.menuRow,
         isLast && styles.menuRowLast,
@@ -2118,15 +2141,16 @@ function MenuEntry({
       <View style={styles.menuRowLeft}>
         <View style={styles.menuIconWrap}>
           {logo === 'github' ? (
-            <Ionicons name="logo-github" size={17} color={colors.textPrimary} />
+            <Ionicons {...decorativeAccessibilityProps} name="logo-github" size={17} color={colors.textPrimary} />
           ) : logo === 'clawdex' ? (
             <Image
+              {...decorativeAccessibilityProps}
               source={clawdexMark}
               resizeMode="contain"
               style={[styles.menuLogoImage, { tintColor: colors.textPrimary }]}
             />
           ) : (
-            <Ionicons name={icon} size={16} color={colors.textPrimary} />
+            <Ionicons {...decorativeAccessibilityProps} name={icon} size={16} color={colors.textPrimary} />
           )}
         </View>
         <View style={styles.menuTextWrap}>
@@ -2136,7 +2160,7 @@ function MenuEntry({
           </Text>
         </View>
       </View>
-      <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+      <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={16} color={colors.textMuted} />
     </Pressable>
   );
 }
@@ -2177,7 +2201,7 @@ function EngineConnectionEntry({
   return (
     <View style={[styles.engineRow, isLast && styles.engineRowLast]}>
       <View style={styles.menuIconWrap}>
-        <Ionicons name={icon} size={16} color={colors.textPrimary} />
+        <Ionicons {...decorativeAccessibilityProps} name={icon} size={16} color={colors.textPrimary} />
       </View>
       <View style={styles.engineTextWrap}>
         <View style={styles.engineTitleLine}>
@@ -2201,6 +2225,9 @@ function EngineConnectionEntry({
             busy && styles.settingRowDisabled,
             pressed && !busy && styles.engineConnectBtnPressed,
           ]}
+          accessibilityRole="button"
+          accessibilityLabel={`${actionLabel} ${title}`}
+          accessibilityState={controlAccessibilityState({ disabled: busy, busy })}
         >
           {busy ? (
             <ActivityIndicator color={theme.colors.accentText} size="small" />
@@ -2239,6 +2266,9 @@ function TipTierEntry({
         (disabled || busy) && styles.settingRowDisabled,
         pressed && !disabled && !busy && styles.linkRowPressed,
       ]}
+      accessibilityRole="button"
+      accessibilityLabel={`${getTipTierTitle(aPackage)}, ${aPackage.product.priceString}`}
+      accessibilityState={controlAccessibilityState({ disabled: disabled || busy, busy })}
     >
       <View style={styles.tipTierTextWrap}>
         <Text style={styles.tipTierTitle}>{getTipTierTitle(aPackage)}</Text>

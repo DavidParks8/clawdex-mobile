@@ -17,6 +17,12 @@ import type {
 } from '../api/types';
 import { useAppTheme, type AppTheme } from '../theme';
 import { createWorkflowMarkdownStyles } from '../screens/mainScreenStyles';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+  useModalAccessibilityFocus,
+} from '../accessibility';
 
 interface BridgeUiSurfaceProps {
   surface: BridgeUiSurface;
@@ -81,6 +87,8 @@ export function BridgeUiModal({
 }: BridgeUiSurfaceProps) {
   const theme = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const modalFocusRef = useModalAccessibilityFocus(true);
+  useAccessibilityAnnouncement(`${surface.title}. ${surface.subtitle ?? ''}`);
 
   return (
     <Modal
@@ -94,7 +102,12 @@ export function BridgeUiModal({
       }}
     >
       <View style={styles.modalBackdrop}>
-        <View style={styles.modalCard}>
+        <View
+          ref={modalFocusRef}
+          accessibilityViewIsModal
+          importantForAccessibility="yes"
+          style={styles.modalCard}
+        >
           <SurfaceHeader surface={surface} onDismiss={onDismiss} />
           <ScrollView
             style={styles.modalScroll}
@@ -131,7 +144,7 @@ function SurfaceHeader({
   const headerContent = (
     <>
       <View style={styles.headerIcon}>
-        <Ionicons name={iconName} size={15} color={getToneColor(theme, surface)} />
+        <Ionicons {...decorativeAccessibilityProps} name={iconName} size={15} color={getToneColor(theme, surface)} />
       </View>
       <View style={styles.headerCopy}>
         <Text style={styles.title}>{surface.title}</Text>
@@ -160,9 +173,12 @@ function SurfaceHeader({
         ]}
         accessibilityRole="button"
         accessibilityLabel={collapsed ? 'Expand surface' : 'Collapse surface'}
+        accessibilityHint={`${collapsed ? 'Shows' : 'Hides'} ${surface.title} details`}
+        accessibilityState={controlAccessibilityState({ expanded: !collapsed })}
       >
         {headerContent}
         <Ionicons
+          {...decorativeAccessibilityProps}
           name={collapsed ? 'chevron-down-outline' : 'chevron-up-outline'}
           size={16}
           color={theme.colors.textMuted}
@@ -179,8 +195,10 @@ function SurfaceHeader({
           onPress={() => onDismiss(surface)}
           hitSlop={8}
           style={({ pressed }) => [styles.dismissButton, pressed && styles.pressed]}
+          accessibilityRole="button"
+          accessibilityLabel={`Dismiss ${surface.title}`}
         >
-          <Ionicons name="close" size={16} color={theme.colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="close" size={16} color={theme.colors.textMuted} />
         </Pressable>
       )}
     </View>
@@ -264,7 +282,13 @@ function SurfaceBlock({ block, compact }: { block: BridgeUiBlock; compact?: bool
     case 'progress': {
       const ratio = Math.max(0, Math.min(1, block.value / block.max));
       return (
-        <View style={styles.progressBlock}>
+        <View
+          style={styles.progressBlock}
+          accessibilityRole="progressbar"
+          accessibilityLabel={block.label}
+          accessibilityValue={{ min: 0, max: block.max, now: block.value, text: block.detail ?? undefined }}
+          accessibilityLiveRegion="polite"
+        >
           <View style={styles.progressHeader}>
             <Text style={styles.bodyText}>{block.label}</Text>
             <Text style={styles.detailText}>
@@ -303,6 +327,8 @@ function SurfaceActions({
         <Pressable
           key={action.id}
           onPress={() => onAction(surface, action)}
+          accessibilityRole="button"
+          accessibilityLabel={action.label}
           style={({ pressed }) => [
             styles.actionButton,
             action.style === 'primary' && styles.actionButtonPrimary,

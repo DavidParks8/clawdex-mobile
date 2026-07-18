@@ -1515,7 +1515,7 @@ export default function App() {
               barStyle={theme.statusBarStyle}
               backgroundColor={theme.colors.bgMain}
             />
-            <View style={styles.loadingRoot}>
+            <View style={styles.loadingRoot} accessibilityRole="progressbar" accessibilityLabel="Loading Clawdex">
               <ActivityIndicator size="large" color={theme.colors.textMuted} />
             </View>
           </SafeAreaProvider>
@@ -1536,7 +1536,7 @@ export default function App() {
               barStyle={theme.statusBarStyle}
               backgroundColor={theme.colors.bgMain}
             />
-            <View style={styles.persistenceRecoveryRoot}>
+            <View style={styles.persistenceRecoveryRoot} accessibilityRole="alert" accessibilityLiveRegion="assertive">
               <Text style={styles.persistenceRecoveryTitle}>Could not load saved app state</Text>
               <Text selectable style={styles.persistenceRecoveryMessage}>
                 {appStateSnapshot.persistenceError.message}
@@ -1547,6 +1547,7 @@ export default function App() {
                   styles.persistenceRecoveryButton,
                   pressed && styles.persistenceRecoveryButtonPressed,
                 ]}
+                accessibilityRole="button"
               >
                 <Text style={styles.persistenceRecoveryButtonText}>Retry</Text>
               </Pressable>
@@ -1778,6 +1779,8 @@ export default function App() {
               <Animated.View
                 layout={usesTabletLayout ? tabletLayoutTransition : undefined}
                 pointerEvents={drawerVisible && drawerCapturesTouches ? 'none' : 'auto'}
+                accessibilityElementsHidden={drawerVisible && drawerCapturesTouches}
+                importantForAccessibility={drawerVisible && drawerCapturesTouches ? 'no-hide-descendants' : 'auto'}
                 style={[
                   styles.screenFrame,
                   usesTabletLayout && styles.tabletScreenFrame,
@@ -1788,7 +1791,7 @@ export default function App() {
                 {renderScreen()}
                 {chatTransitionChatId || (currentScreen === 'Main' && mainOpeningChatId) ? (
                   <View style={styles.chatTransitionOverlay}>
-                    <View style={styles.chatTransitionCard}>
+                    <View style={styles.chatTransitionCard} accessibilityRole="progressbar" accessibilityLabel="Opening chat" accessibilityLiveRegion="polite">
                       <ActivityIndicator size="small" color={theme.colors.textPrimary} />
                       <Text style={styles.chatTransitionTitle}>Opening chat...</Text>
                     </View>
@@ -1811,6 +1814,8 @@ export default function App() {
                     <Animated.View style={[styles.drawer, { width: drawerWidth }, drawerAnimatedStyle]}>
                       <Animated.View
                         style={[styles.drawerContentShell, drawerContentAnimatedStyle]}
+                        accessibilityViewIsModal={drawerVisible}
+                        importantForAccessibility={drawerVisible ? 'yes' : 'auto'}
                       >
                         <DrawerContent
                           key={activeBridgeProfile?.id}

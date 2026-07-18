@@ -20,6 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ChatEngine, ChatMessage as ApiChatMessage } from '../api/types';
 import { extractLocalPreviewUrls } from '../browserPreview';
 import { useAppTheme, type AppTheme } from '../theme';
+import { controlAccessibilityState, decorativeAccessibilityProps } from '../accessibility';
 import { toMarkdownImageSource } from './chatImageSource';
 import {
   computerUseActionIconName,
@@ -142,7 +143,7 @@ function ChatMessageComponent({
             if (block.kind === 'file') {
               return (
                 <View key={`${message.id}-file-${String(index)}`} style={styles.userFileChip}>
-                  <Ionicons name="document-text-outline" size={12} color={theme.colors.textMuted} />
+                  <Ionicons {...decorativeAccessibilityProps} name="document-text-outline" size={12} color={theme.colors.textMuted} />
                   <Text style={styles.userFileChipText} numberOfLines={1}>
                     {block.value}
                   </Text>
@@ -193,6 +194,7 @@ function ChatMessageComponent({
                   style={styles.userFileChip}
                 >
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name="document-text-outline"
                     size={12}
                     color={theme.colors.textMuted}
@@ -225,8 +227,10 @@ function ChatMessageComponent({
                   styles.localPreviewLink,
                   pressed && styles.localPreviewLinkPressed,
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${targetUrl} in Browser`}
               >
-                <Ionicons name="globe-outline" size={14} color={theme.colors.textPrimary} />
+                <Ionicons {...decorativeAccessibilityProps} name="globe-outline" size={14} color={theme.colors.textPrimary} />
                 <Text style={styles.localPreviewLinkText} numberOfLines={1}>
                   {`Open ${targetUrl} in Browser`}
                 </Text>
@@ -309,9 +313,14 @@ function ChatMessageComponent({
                   hasDetails && styles.reasoningCardInteractive,
                   pressed && hasDetails && styles.reasoningCardPressed,
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={entry.title}
+                accessibilityHint={hasDetails ? `${expanded ? 'Hides' : 'Shows'} reasoning details` : undefined}
+                accessibilityState={controlAccessibilityState({ disabled: !hasDetails, expanded: hasDetails ? expanded : undefined })}
               >
                 <View style={styles.reasoningHeader}>
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name="sparkles-outline"
                     size={13}
                     color={theme.colors.textMuted}
@@ -319,6 +328,7 @@ function ChatMessageComponent({
                   <Text style={styles.reasoningTitle}>{entry.title}</Text>
                   {hasDetails ? (
                     <Ionicons
+                      {...decorativeAccessibilityProps}
                       name={expanded ? 'chevron-up' : 'chevron-down'}
                       size={14}
                       color={theme.colors.textMuted}
@@ -378,9 +388,14 @@ function ChatMessageComponent({
                   styles.subAgentCard,
                   visual.isError && styles.subAgentCardError,
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={entry.title}
+                accessibilityHint={targetThreadId ? 'Opens the sub-agent transcript' : undefined}
+                accessibilityState={controlAccessibilityState({ disabled: !targetThreadId || !onOpenSubAgentThread })}
               >
                 <View style={styles.subAgentHeader}>
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name={visual.icon}
                     size={14}
                     color={visual.isError ? theme.colors.statusError : theme.colors.warning}
@@ -402,7 +417,7 @@ function ChatMessageComponent({
                 {targetThreadId && onOpenSubAgentThread ? (
                   <View style={styles.subAgentOpenHint}>
                     <Text style={styles.subAgentOpenHintText}>Open agent chat</Text>
-                    <Ionicons name="chevron-forward" size={12} color={theme.colors.textMuted} />
+                    <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={12} color={theme.colors.textMuted} />
                   </View>
                 ) : null}
               </Pressable>
@@ -473,9 +488,14 @@ function ChatMessageComponent({
                   hasDetails && styles.timelineCardInteractive,
                   pressed && hasDetails && styles.timelineCardPressed,
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={entry.title}
+                accessibilityHint={hasDetails ? `${expanded ? 'Hides' : 'Shows'} tool details` : undefined}
+                accessibilityState={controlAccessibilityState({ disabled: !hasDetails, expanded: hasDetails ? expanded : undefined })}
               >
                 <View style={styles.timelineHeader}>
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name={visual.icon}
                     size={14}
                     color={visual.isError ? theme.colors.statusError : theme.colors.statusRunning}
@@ -491,6 +511,7 @@ function ChatMessageComponent({
                   </Text>
                   {hasDetails ? (
                     <Ionicons
+                      {...decorativeAccessibilityProps}
                       name={expanded ? 'chevron-up' : 'chevron-down'}
                       size={14}
                       color={theme.colors.textMuted}
@@ -542,8 +563,10 @@ function ChatMessageComponent({
                 styles.localPreviewLink,
                 pressed && styles.localPreviewLinkPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${targetUrl} in Browser`}
             >
-              <Ionicons name="globe-outline" size={14} color={theme.colors.textPrimary} />
+              <Ionicons {...decorativeAccessibilityProps} name="globe-outline" size={14} color={theme.colors.textPrimary} />
               <Text style={styles.localPreviewLinkText} numberOfLines={1}>
                 {`Open ${targetUrl} in Browser`}
               </Text>
@@ -731,9 +754,14 @@ export const ToolActivityGroup = memo(function ToolActivityGroupComponent({
                     rowError && styles.timelineCardError,
                     pressed && hasDetails && styles.toolGroupEntryCardPressed,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={rowTitle}
+                  accessibilityHint={hasDetails ? `${entryExpanded ? 'Hides' : 'Shows'} tool output` : undefined}
+                  accessibilityState={controlAccessibilityState({ disabled: !hasDetails, expanded: hasDetails ? entryExpanded : undefined })}
                 >
                   <View style={styles.toolGroupEntryHeader}>
                     <Ionicons
+                      {...decorativeAccessibilityProps}
                       name={rowVisual.icon}
                       size={14}
                       color={
@@ -761,6 +789,7 @@ export const ToolActivityGroup = memo(function ToolActivityGroupComponent({
                     )}
                     {hasDetails ? (
                       <Ionicons
+                        {...decorativeAccessibilityProps}
                         name={entryExpanded ? 'chevron-up' : 'chevron-down'}
                         size={14}
                         color={theme.colors.textMuted}
@@ -839,7 +868,7 @@ export const ToolActivityGroup = memo(function ToolActivityGroupComponent({
       <View style={[styles.toolGroupCard, liveTurnActive && styles.toolGroupCardLive]}>
         <View style={styles.toolGroupEyebrowRow}>
           <View style={styles.toolGroupEyebrowLeft}>
-            <Ionicons name="hardware-chip-outline" size={12} color={theme.colors.textMuted} />
+            <Ionicons {...decorativeAccessibilityProps} name="hardware-chip-outline" size={12} color={theme.colors.textMuted} />
             <Text style={styles.toolGroupEyebrowText}>Tools</Text>
           </View>
         </View>
@@ -850,11 +879,16 @@ export const ToolActivityGroup = memo(function ToolActivityGroupComponent({
             styles.toolGroupCardInteractive,
             pressed && styles.toolGroupCardPressed,
           ]}
+          accessibilityRole="button"
+          accessibilityLabel={`${summary}, tools`}
+          accessibilityHint={`${expanded ? 'Collapses' : 'Expands'} tool activity`}
+          accessibilityState={controlAccessibilityState({ expanded })}
         >
           <View style={styles.toolGroupHeader}>
-            <Ionicons name="chevron-expand-outline" size={14} color={theme.colors.textMuted} />
+            <Ionicons {...decorativeAccessibilityProps} name="chevron-expand-outline" size={14} color={theme.colors.textMuted} />
             <Text style={styles.toolGroupTitle}>{summary}</Text>
             <Ionicons
+              {...decorativeAccessibilityProps}
               name={expanded ? 'chevron-up' : 'chevron-down'}
               size={14}
               color={theme.colors.textMuted}
@@ -971,6 +1005,10 @@ function CursorActivityMessage({
                 styles.cursorActivityRow,
                 pressed && hasDetails && styles.cursorActivityRowPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={visual.title}
+              accessibilityHint={hasDetails ? `${expanded ? 'Hides' : 'Shows'} activity details` : undefined}
+              accessibilityState={controlAccessibilityState({ disabled: !hasDetails, expanded: hasDetails ? expanded : undefined })}
             >
               <View style={styles.cursorActivityRail}>
                 <View
@@ -992,6 +1030,7 @@ function CursorActivityMessage({
                   </Text>
                   {hasDetails ? (
                     <Ionicons
+                      {...decorativeAccessibilityProps}
                       name={expanded ? 'chevron-up' : 'chevron-down'}
                       size={13}
                       color={theme.colors.textMuted}
@@ -1088,7 +1127,7 @@ function ComputerUseTimeline({
       <View style={styles.computerUseTrace}>
         {parsedEntries.length > 1 ? (
           <View style={styles.computerUseTraceSummaryRow}>
-            <Ionicons name="desktop-outline" size={14} color={theme.colors.textMuted} />
+            <Ionicons {...decorativeAccessibilityProps} name="desktop-outline" size={14} color={theme.colors.textMuted} />
             <Text style={styles.computerUseTraceSummaryText}>
               {`${String(parsedEntries.length)} actions`}
             </Text>

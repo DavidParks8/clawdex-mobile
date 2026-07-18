@@ -21,6 +21,7 @@ import type { ChatEngine, ChatSummary, RpcNotification } from '../api/types';
 import type { HostBridgeWsClient } from '../api/ws';
 import { getChatEngineLabel } from '../chatEngines';
 import { BrandMark } from '../components/BrandMark';
+import { controlAccessibilityState, decorativeAccessibilityProps } from '../accessibility';
 import { ChatEngineIcon } from '../components/ChatEngineIcon';
 import {
   DEFAULT_DRAWER_CHAT_ENGINES,
@@ -1032,6 +1033,9 @@ export const DrawerContent = memo(function DrawerContentComponent({
                   </Text>
                 </View>
                 <View
+                  accessible
+                  accessibilityLabel={wsConnected ? 'Bridge connected, live' : 'Bridge disconnected, offline'}
+                  accessibilityLiveRegion="polite"
                   style={[
                     styles.connectionBadge,
                     wsConnected
@@ -1068,19 +1072,22 @@ export const DrawerContent = memo(function DrawerContentComponent({
                   pressed && styles.primaryActionButtonPressed,
                 ]}
                 onPress={handleNewChat}
+                accessibilityRole="button"
+                accessibilityLabel="New chat"
               >
-                <Ionicons name="add" size={16} color={theme.colors.accentText} />
+                <Ionicons {...decorativeAccessibilityProps} name="add" size={16} color={theme.colors.accentText} />
                 <Text style={styles.primaryActionText}>New chat</Text>
               </Pressable>
               <Pressable
                 accessibilityLabel="Open preview browser"
+                accessibilityRole="button"
                 style={({ pressed }) => [
                   styles.secondaryActionButton,
                   pressed && styles.secondaryActionButtonPressed,
                 ]}
                 onPress={() => handleNavigate('Browser')}
               >
-                <Ionicons name="globe-outline" size={15} color={theme.colors.textPrimary} />
+                <Ionicons {...decorativeAccessibilityProps} name="globe-outline" size={15} color={theme.colors.textPrimary} />
                 <Text style={styles.secondaryActionText}>Browser</Text>
               </Pressable>
             </View>
@@ -1093,6 +1100,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
                 <Pressable
                   accessibilityLabel="Filter chat engines"
                   accessibilityRole="button"
+                  accessibilityState={controlAccessibilityState({ expanded: filterMenuVisible })}
                   hitSlop={6}
                   onPress={handleToggleFilterMenu}
                   style={({ pressed }) => [
@@ -1103,6 +1111,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
                   ]}
                 >
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name="funnel-outline"
                     size={14}
                     color={hasActiveFilters || filterMenuVisible ? theme.colors.textPrimary : theme.colors.textMuted}
@@ -1120,7 +1129,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
           {filterMenuVisible ? (
             <View style={styles.filterPanel}>
               <View style={styles.searchField}>
-                <Ionicons name="search" size={16} color={theme.colors.textMuted} />
+                <Ionicons {...decorativeAccessibilityProps} name="search" size={16} color={theme.colors.textMuted} />
                 <TextInput
                   value={searchQuery}
                   onChangeText={setSearchQuery}
@@ -1132,6 +1141,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
                   autoCorrect={false}
                   returnKeyType="search"
                   clearButtonMode="never"
+                  accessibilityLabel="Search chats"
                 />
                 {isSearching ? (
                   <Pressable
@@ -1144,6 +1154,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
                     ]}
                   >
                     <Ionicons
+                      {...decorativeAccessibilityProps}
                       name="close"
                       size={14}
                       color={theme.colors.textSecondary}
@@ -1177,6 +1188,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
                       </Text>
                       {selected ? (
                         <Ionicons
+                          {...decorativeAccessibilityProps}
                           name="checkmark"
                           size={14}
                           color={theme.colors.textPrimary}
@@ -1190,13 +1202,13 @@ export const DrawerContent = memo(function DrawerContentComponent({
           ) : null}
 
           {loading ? (
-            <View style={styles.emptyStateCard}>
+            <View style={styles.emptyStateCard} accessibilityRole="progressbar" accessibilityLabel="Loading chats" accessibilityLiveRegion="polite">
               <ActivityIndicator color={theme.colors.textMuted} style={styles.loader} />
               <Text style={styles.emptyTitle}>Loading chats</Text>
               <Text style={styles.emptyHint}>Syncing recent threads from your bridge.</Text>
             </View>
           ) : chatSections.length === 0 ? (
-            <View style={styles.emptyStateCard}>
+            <View style={styles.emptyStateCard} accessibilityLiveRegion="polite">
               <View style={styles.emptyStateIconWrap}>
                 <Ionicons
                   name={isSearching ? 'search-outline' : 'chatbubbles-outline'}
@@ -1258,10 +1270,15 @@ export const DrawerContent = memo(function DrawerContentComponent({
                     ]}
                     onPress={() => toggleWorkspaceSection(section.key)}
                     onLongPress={() => showWorkspacePinAction(section)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${section.title}, ${String(section.itemCount)} chats${hasLiveChat ? ', has live chat' : ''}`}
+                    accessibilityHint={isSearching ? undefined : 'Toggles this workspace. Long press to pin or unpin.'}
+                    accessibilityState={controlAccessibilityState({ disabled: isSearching, expanded: isSearching ? undefined : !collapsed })}
                   >
                     <View style={styles.workspaceGroupHeaderRow}>
                       {isPinnedWorkspace ? (
                         <Ionicons
+                          {...decorativeAccessibilityProps}
                           name="pin-outline"
                           size={11}
                           color={theme.colors.textMuted}
@@ -1270,12 +1287,13 @@ export const DrawerContent = memo(function DrawerContentComponent({
                       ) : null}
                       {hasLiveChat ? (
                         <View
-                          accessibilityLabel="Workspace has live chat"
+                          {...decorativeAccessibilityProps}
                           style={styles.workspaceGroupLiveDot}
                         />
                       ) : null}
                       <View style={styles.workspaceGroupIconTile}>
                         <Ionicons
+                          {...decorativeAccessibilityProps}
                           name="folder-outline"
                           size={13}
                           color={theme.colors.textMuted}
@@ -1300,6 +1318,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
                       {!isSearching ? (
                         <View style={styles.workspaceGroupHeaderMeta}>
                           <Ionicons
+                            {...decorativeAccessibilityProps}
                             name={collapsed ? 'chevron-forward' : 'chevron-down'}
                             size={14}
                             color={theme.colors.textMuted}
@@ -1324,6 +1343,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
                 return (
                   <Pressable
                     accessibilityRole="button"
+                    accessibilityLabel={`Show all chats in ${section.title}`}
                     onPress={() => showAllWorkspaceChats(section)}
                     style={({ pressed }) => [
                       styles.workspaceShowMoreRow,
@@ -1331,7 +1351,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
                     ]}
                   >
                     <Text style={styles.workspaceShowMoreText}>Show all</Text>
-                    <Ionicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
+                    <Ionicons {...decorativeAccessibilityProps} name="chevron-down" size={14} color={theme.colors.textSecondary} />
                   </Pressable>
                 );
               }}
@@ -1355,6 +1375,10 @@ export const DrawerContent = memo(function DrawerContentComponent({
                     ]}
                     onPress={() => handleSelectChat(chat.id)}
                     onLongPress={() => showChatPinAction(chat)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${chat.title || 'Untitled chat'}${chatSubtitle ? `, ${chatSubtitle}` : ''}${isRunning ? ', running' : ''}${isPinnedChat ? ', pinned' : ''}`}
+                    accessibilityHint="Opens this chat. Long press to pin or unpin."
+                    accessibilityState={controlAccessibilityState({ selected: isSelected })}
                   >
                     {({ pressed }) => (
                       <View
@@ -1401,6 +1425,7 @@ export const DrawerContent = memo(function DrawerContentComponent({
                           <View style={styles.chatItemMeta}>
                             {isPinnedChat ? (
                               <Ionicons
+                                {...decorativeAccessibilityProps}
                                 name="pin-outline"
                                 size={10}
                                 color={theme.colors.textMuted}
@@ -1434,13 +1459,14 @@ export const DrawerContent = memo(function DrawerContentComponent({
         <View style={styles.footer}>
           <Pressable
             accessibilityLabel="Open settings"
+            accessibilityRole="button"
             style={({ pressed }) => [
               styles.footerSettingsButton,
               pressed && styles.footerSettingsButtonPressed,
             ]}
             onPress={() => handleNavigate('Settings')}
           >
-            <Ionicons name="settings-outline" size={15} color={theme.colors.textPrimary} />
+            <Ionicons {...decorativeAccessibilityProps} name="settings-outline" size={15} color={theme.colors.textPrimary} />
             <Text style={styles.footerSettingsText}>Settings</Text>
           </Pressable>
         </View>

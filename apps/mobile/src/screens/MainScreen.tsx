@@ -83,6 +83,11 @@ import {
 } from '../components/usageLimitBadges';
 import { env } from '../config';
 import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+} from '../accessibility';
+import {
   formatModelOptionDescription,
   formatModelOptionLabel,
 } from '../modelOptions';
@@ -7867,6 +7872,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         : usageLimitAlert && isRateLimitReachedMessage(error)
           ? null
           : error;
+    useAccessibilityAnnouncement(visibleError ?? userInputError ?? gitCheckoutError);
     const androidComposerReservedInset = shouldShowComposer
       ? Math.max(
           theme.spacing.lg,
@@ -7892,12 +7898,13 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           !overlay && !keyboardVisible ? styles.composerContainerResting : null,
         ]}
       >
-        {visibleError ? <Text style={styles.errorText}>{visibleError}</Text> : null}
+        {visibleError ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorText}>{visibleError}</Text> : null}
         {showBridgeRecoveryBanner ? (
-          <View style={styles.bridgeRecoveryBanner}>
+          <View style={styles.bridgeRecoveryBanner} accessibilityRole="alert" accessibilityLiveRegion="assertive">
             <View style={styles.bridgeRecoveryBannerTopRow}>
               <View style={styles.bridgeRecoveryBannerIconWrap}>
                 <Ionicons
+                  {...decorativeAccessibilityProps}
                   name="warning-outline"
                   size={16}
                   color={theme.colors.warning}
@@ -7928,10 +7935,11 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           </View>
         ) : null}
         {!showBridgeRecoveryBanner && showUsageLimitBanner && usageLimitAlert ? (
-          <View style={styles.bridgeRecoveryBanner}>
+          <View style={styles.bridgeRecoveryBanner} accessibilityLiveRegion="polite">
             <View style={styles.bridgeRecoveryBannerTopRow}>
               <View style={styles.bridgeRecoveryBannerIconWrap}>
                 <Ionicons
+                  {...decorativeAccessibilityProps}
                   name="warning-outline"
                   size={16}
                   color={theme.colors.warning}
@@ -8025,7 +8033,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         {!showSlashSuggestions && mentionQuery !== null ? (
           loadingAttachmentFileCandidates && mentionPathSuggestions.length === 0 ? (
             <View style={styles.inlineMentionStatus}>
-              <Text style={styles.workspaceModalLoading}>Indexing files…</Text>
+              <Text accessibilityLiveRegion="polite" style={styles.workspaceModalLoading}>Indexing files…</Text>
             </View>
           ) : mentionPathSuggestions.length > 0 ? (
             <ScrollView
@@ -8328,8 +8336,10 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                   pressed && styles.modelChipPressed,
                 ]}
                 onPress={openModelReasoningMenu}
+                accessibilityRole="button"
+                accessibilityLabel={`Model controls, ${modelReasoningLabel}`}
               >
-                <Ionicons name="sparkles-outline" size={12} color={theme.colors.textMuted} />
+                <Ionicons {...decorativeAccessibilityProps} name="sparkles-outline" size={12} color={theme.colors.textMuted} />
                 <Text style={styles.modelChipText} numberOfLines={1}>
                   {modelReasoningLabel}
                 </Text>
@@ -8340,8 +8350,10 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                   pressed && styles.modelChipPressed,
                 ]}
                 onPress={openCollaborationModeMenu}
+                accessibilityRole="button"
+                accessibilityLabel={`Agent mode, ${collaborationModeLabel}`}
               >
-                <Ionicons name="map-outline" size={12} color={theme.colors.textMuted} />
+                <Ionicons {...decorativeAccessibilityProps} name="map-outline" size={12} color={theme.colors.textMuted} />
                 <Text style={styles.modelChipText} numberOfLines={1}>
                   {collaborationModeLabel}
                 </Text>
@@ -8355,8 +8367,10 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                   onPress={() => {
                     void openAgentThreadSelector();
                   }}
+                  accessibilityRole="button"
+                  accessibilityLabel={agentThreadChipLabel}
                 >
-                  <Ionicons name="people-outline" size={12} color={theme.colors.textMuted} />
+                  <Ionicons {...decorativeAccessibilityProps} name="people-outline" size={12} color={theme.colors.textMuted} />
                   <Text style={styles.modelChipText} numberOfLines={1}>
                     {agentThreadChipLabel}
                   </Text>
@@ -8374,8 +8388,12 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                     void toggleFastMode();
                   }}
                   disabled={fastModeControlDisabled}
+                  accessibilityRole="switch"
+                  accessibilityLabel="Fast mode"
+                  accessibilityState={{ checked: fastModeEnabled, disabled: fastModeControlDisabled }}
                 >
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name={fastModeEnabled ? 'flash' : 'flash-outline'}
                     size={12}
                     color={fastModeEnabled ? theme.colors.textPrimary : theme.colors.textMuted}
@@ -8710,7 +8728,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                   { paddingBottom: theme.spacing.md },
                 ]}
               >
-                <View style={styles.renameModalCard}>
+                <View accessibilityViewIsModal importantForAccessibility="yes" style={styles.renameModalCard}>
                   <Text style={styles.renameModalTitle}>Git checkout</Text>
                   <Text style={styles.gitCheckoutHint}>
                     Paste an SSH or HTTPS repository URL, choose where to clone it, then start
@@ -8723,6 +8741,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                     placeholder="git@github.com:org/repo.git"
                     placeholderTextColor={theme.colors.textMuted}
                     style={styles.renameModalInput}
+                    accessibilityLabel="Repository URL"
                     autoFocus
                     editable={!gitCheckoutCloning}
                     autoCapitalize="none"
@@ -8736,8 +8755,11 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                       pressed && styles.gitCheckoutPathButtonPressed,
                     ]}
                     disabled={gitCheckoutCloning}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Clone into ${gitCheckoutDestinationLabel}`}
                   >
                     <Ionicons
+                      {...decorativeAccessibilityProps}
                       name="folder-open-outline"
                       size={16}
                       color={theme.colors.textMuted}
@@ -8748,7 +8770,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                         {gitCheckoutDestinationLabel}
                       </Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={14} color={theme.colors.textMuted} />
+                    <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={14} color={theme.colors.textMuted} />
                   </Pressable>
                   <TextInput
                     value={gitCheckoutDirectoryName}
@@ -8757,6 +8779,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                     placeholder="repo-folder"
                     placeholderTextColor={theme.colors.textMuted}
                     style={styles.renameModalInput}
+                    accessibilityLabel="Clone directory name"
                     editable={!gitCheckoutCloning}
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -8769,7 +8792,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                     </Text>
                   ) : null}
                   {gitCheckoutError ? (
-                    <Text style={styles.gitCheckoutErrorText}>{gitCheckoutError}</Text>
+                    <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.gitCheckoutErrorText}>{gitCheckoutError}</Text>
                   ) : null}
                   <View style={styles.renameModalActions}>
                     <Pressable
@@ -8856,7 +8879,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                   { paddingBottom: theme.spacing.md },
                 ]}
               >
-                <View style={styles.renameModalCard}>
+                <View accessibilityViewIsModal importantForAccessibility="yes" style={styles.renameModalCard}>
                   <Text style={styles.renameModalTitle}>Rename chat</Text>
                   <TextInput
                     value={renameDraft}
@@ -8868,6 +8891,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                     autoFocus
                     editable={!renaming}
                     maxLength={120}
+                    accessibilityLabel="Chat name"
                   />
                   <View style={styles.renameModalActions}>
                     <Pressable
@@ -8909,7 +8933,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           onRequestClose={closeAttachmentModal}
         >
           <View style={styles.renameModalBackdrop}>
-            <View style={styles.renameModalCard}>
+            <View accessibilityViewIsModal importantForAccessibility="yes" style={styles.renameModalCard}>
               <Text style={styles.renameModalTitle}>Attach file</Text>
               <Text style={styles.attachmentModalHint}>
                 Enter a workspace-relative path to include as context.
@@ -8927,6 +8951,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                 autoCorrect={false}
                 onSubmitEditing={submitAttachmentPath}
                 returnKeyType="done"
+                accessibilityLabel="Workspace file path"
               />
               {loadingAttachmentFileCandidates ? (
                 <Text style={styles.workspaceModalLoading}>Indexing files…</Text>
@@ -8971,8 +8996,10 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                           styles.attachmentRemoveButton,
                           pressed && styles.attachmentRemoveButtonPressed,
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${path}`}
                       >
-                        <Ionicons name="close" size={14} color={theme.colors.textMuted} />
+                        <Ionicons {...decorativeAccessibilityProps} name="close" size={14} color={theme.colors.textMuted} />
                       </Pressable>
                     </View>
                   ))}
@@ -9017,7 +9044,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           }}
         >
           <View style={styles.userInputModalBackdrop}>
-            <View style={styles.userInputModalCard}>
+            <View accessibilityViewIsModal importantForAccessibility="yes" style={styles.userInputModalCard}>
               <Text style={styles.userInputModalTitle}>Clarification needed</Text>
               <ScrollView
                 style={styles.userInputQuestionsList}
@@ -9048,6 +9075,10 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                                 pressed && styles.userInputOptionButtonPressed,
                               ]}
                               onPress={() => setUserInputDraft(question.id, option.label)}
+                              accessibilityRole="radio"
+                              accessibilityState={{ checked: answer.trim() === option.label.trim() }}
+                              accessibilityLabel={option.label}
+                              accessibilityHint={option.description || undefined}
                             >
                               <View style={styles.userInputOptionHeaderRow}>
                                 <Text style={styles.userInputOptionIndex}>
@@ -9082,6 +9113,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                             styles.userInputAnswerInput,
                             question.isSecret && styles.userInputAnswerInputSecret,
                           ]}
+                          accessibilityLabel={question.header || question.question}
                         />
                       ) : null}
                     </View>
@@ -9089,7 +9121,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                 })}
               </ScrollView>
               {userInputError ? (
-                <Text style={styles.userInputErrorText}>{userInputError}</Text>
+                <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.userInputErrorText}>{userInputError}</Text>
               ) : null}
               <Pressable
                 onPress={() => void submitUserInputRequest()}
@@ -9099,6 +9131,8 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                   resolvingUserInput && styles.userInputSubmitButtonDisabled,
                 ]}
                 disabled={resolvingUserInput}
+                accessibilityRole="button"
+                accessibilityState={controlAccessibilityState({ disabled: resolvingUserInput, busy: resolvingUserInput })}
               >
                 <Text style={styles.userInputSubmitButtonText}>
                   {resolvingUserInput ? 'Submitting…' : 'Submit answers'}
@@ -9191,12 +9225,14 @@ function ComposeView({
           pressed && styles.workspaceSelectBtnPressed,
         ]}
         onPress={onOpenWorkspacePicker}
+        accessibilityRole="button"
+        accessibilityLabel={`Workspace, ${startWorkspaceLabel}`}
       >
-        <Ionicons name="folder-open-outline" size={16} color={theme.colors.textMuted} />
+        <Ionicons {...decorativeAccessibilityProps} name="folder-open-outline" size={16} color={theme.colors.textMuted} />
         <Text style={[styles.workspaceSelectLabel, styles.workspacePathSelectLabel]}>
           {startWorkspaceLabel}
         </Text>
-        <Ionicons name="chevron-forward" size={14} color={theme.colors.textMuted} />
+        <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={14} color={theme.colors.textMuted} />
       </Pressable>
       {showEnginePicker ? (
         <Pressable
@@ -9205,12 +9241,14 @@ function ComposeView({
             pressed && styles.workspaceSelectBtnPressed,
           ]}
           onPress={onOpenEnginePicker}
+          accessibilityRole="button"
+          accessibilityLabel={`Engine, ${engineLabel}`}
         >
-          <Ionicons name="layers-outline" size={16} color={theme.colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="layers-outline" size={16} color={theme.colors.textMuted} />
           <Text style={styles.workspaceSelectLabel} numberOfLines={1}>
             {engineLabel}
           </Text>
-          <Ionicons name="chevron-forward" size={14} color={theme.colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={14} color={theme.colors.textMuted} />
         </Pressable>
       ) : null}
       <Pressable
@@ -9219,12 +9257,14 @@ function ComposeView({
           pressed && styles.workspaceSelectBtnPressed,
         ]}
         onPress={onOpenModelReasoningPicker}
+        accessibilityRole="button"
+        accessibilityLabel={`Model controls, ${modelReasoningLabel}`}
       >
-        <Ionicons name="sparkles-outline" size={16} color={theme.colors.textMuted} />
+        <Ionicons {...decorativeAccessibilityProps} name="sparkles-outline" size={16} color={theme.colors.textMuted} />
         <Text style={styles.workspaceSelectLabel} numberOfLines={1}>
           {modelReasoningLabel}
         </Text>
-        <Ionicons name="chevron-forward" size={14} color={theme.colors.textMuted} />
+        <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={14} color={theme.colors.textMuted} />
       </Pressable>
       <Pressable
         style={({ pressed }) => [
@@ -9232,12 +9272,14 @@ function ComposeView({
           pressed && styles.workspaceSelectBtnPressed,
         ]}
         onPress={onOpenCollaborationModePicker}
+        accessibilityRole="button"
+        accessibilityLabel={`Agent mode, ${collaborationModeLabel}`}
       >
-        <Ionicons name="map-outline" size={16} color={theme.colors.textMuted} />
+        <Ionicons {...decorativeAccessibilityProps} name="map-outline" size={16} color={theme.colors.textMuted} />
         <Text style={styles.workspaceSelectLabel} numberOfLines={1}>
           {collaborationModeLabel}
         </Text>
-        <Ionicons name="chevron-forward" size={14} color={theme.colors.textMuted} />
+        <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={14} color={theme.colors.textMuted} />
       </Pressable>
       {showFastMode ? (
         <Pressable
@@ -9246,12 +9288,16 @@ function ComposeView({
             pressed && styles.workspaceSelectBtnPressed,
           ]}
           onPress={onToggleFastMode}
+          accessibilityRole="switch"
+          accessibilityLabel="Fast mode"
+          accessibilityState={{ checked: fastModeEnabled }}
         >
-          <Ionicons name="flash-outline" size={16} color={theme.colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="flash-outline" size={16} color={theme.colors.textMuted} />
           <Text style={styles.workspaceSelectLabel} numberOfLines={1}>
             {fastModeLabel}
           </Text>
           <Ionicons
+            {...decorativeAccessibilityProps}
             name={fastModeEnabled ? 'checkmark-circle' : 'ellipse-outline'}
             size={14}
             color={theme.colors.textMuted}
@@ -9267,6 +9313,8 @@ function ComposeView({
               pressed && styles.suggestionCardPressed,
             ]}
             onPress={() => onSuggestion(s)}
+            accessibilityRole="button"
+            accessibilityLabel={`Use suggestion: ${s}`}
           >
             <Text style={styles.suggestionText}>{s}</Text>
           </Pressable>
@@ -9316,6 +9364,9 @@ function AgentThreadsPanel({
           styles.agentPanelHeaderPressable,
           pressed && styles.agentPanelHeaderPressed,
         ]}
+        accessibilityRole="button"
+        accessibilityLabel={`Agents, ${String(runningCount)} running`}
+        accessibilityState={controlAccessibilityState({ expanded: !collapsed })}
       >
         <View style={styles.agentPanelHeaderCopy}>
           <Text style={styles.agentPanelEyebrow}>Agents</Text>
@@ -9326,6 +9377,7 @@ function AgentThreadsPanel({
           </Text>
         </View>
         <Ionicons
+          {...decorativeAccessibilityProps}
           name={collapsed ? 'chevron-down' : 'chevron-up'}
           size={16}
           color={theme.colors.textMuted}
@@ -9352,6 +9404,9 @@ function AgentThreadsPanel({
                 row.selected && styles.agentPanelRowSelected,
                 pressed && styles.agentPanelRowPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${row.title}, ${row.runtime.label}. ${row.description}`}
+              accessibilityState={controlAccessibilityState({ selected: row.selected, busy: row.runtime.isActive })}
             >
               <View
                 style={[
@@ -9391,6 +9446,7 @@ function AgentThreadsPanel({
                   <ActivityIndicator size="small" color={row.runtime.statusColor} />
                 ) : (
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name={row.runtime.icon}
                     size={12}
                     color={row.runtime.statusColor}
@@ -9421,7 +9477,7 @@ function ChatOpeningView() {
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   return (
-    <View style={styles.chatOpeningShell}>
+    <View style={styles.chatOpeningShell} accessibilityRole="progressbar" accessibilityLabel="Opening chat" accessibilityLiveRegion="polite">
       <View style={styles.chatOpeningCard}>
         <View style={styles.chatOpeningTopRow}>
           <ActivityIndicator size="small" color={theme.colors.textMuted} />
@@ -9810,8 +9866,11 @@ function WorkflowCard({
         pressed && styles.modelChipPressed,
       ]}
       onPress={onToggleCollapse}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}, ${collapsedSummary}`}
+      accessibilityState={controlAccessibilityState({ expanded: !collapsed })}
     >
-      <Ionicons name={iconName} size={14} color={theme.colors.textPrimary} />
+      <Ionicons {...decorativeAccessibilityProps} name={iconName} size={14} color={theme.colors.textPrimary} />
       <View style={styles.planCardHeaderText}>
         <Text style={styles.planCardTitle}>{title}</Text>
         {collapsed ? (
@@ -9821,6 +9880,7 @@ function WorkflowCard({
         ) : null}
       </View>
       <Ionicons
+        {...decorativeAccessibilityProps}
         name={collapsed ? 'chevron-down-outline' : 'chevron-up-outline'}
         size={16}
         color={theme.colors.textMuted}
@@ -9828,7 +9888,7 @@ function WorkflowCard({
     </Pressable>
   ) : (
     <View style={styles.planCardHeader}>
-      <Ionicons name={iconName} size={14} color={theme.colors.textPrimary} />
+      <Ionicons {...decorativeAccessibilityProps} name={iconName} size={14} color={theme.colors.textPrimary} />
       <View style={styles.planCardHeaderText}>
         <Text style={styles.planCardTitle}>{title}</Text>
         <Text style={styles.planCardSummary} numberOfLines={2}>
@@ -9866,6 +9926,8 @@ function WorkflowCard({
                   actionDisabled && styles.planPromptOptionButtonDisabled,
                   pressed && !actionDisabled && styles.planPromptOptionButtonPressed,
                 ]}
+                accessibilityRole="button"
+                accessibilityState={controlAccessibilityState({ disabled: actionDisabled })}
               >
                 <Text
                   style={[
@@ -9892,6 +9954,8 @@ function WorkflowCard({
                   actionDisabled && styles.planPromptOptionButtonDisabled,
                   pressed && !actionDisabled && styles.planPromptOptionButtonPressed,
                 ]}
+                accessibilityRole="button"
+                accessibilityState={controlAccessibilityState({ disabled: actionDisabled })}
               >
                 <Text
                   style={[
@@ -9943,7 +10007,7 @@ function QueuedMessageDock({
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   return (
-    <View style={styles.queuedMessageDock}>
+    <View style={styles.queuedMessageDock} accessibilityLiveRegion="polite">
       <View style={[styles.planCard, styles.planOverlayCard, styles.queuedMessageCard]}>
         <View style={styles.queuedMessageHeader}>
           <View style={styles.queuedMessageHeaderText}>
@@ -9970,6 +10034,9 @@ function QueuedMessageDock({
                 !cancelEnabled && styles.queuedMessageActionButtonDisabled,
                 pressed && cancelEnabled && styles.queuedMessageActionButtonPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel queued message"
+              accessibilityState={controlAccessibilityState({ disabled: !cancelEnabled })}
             >
               <Text
                 style={[
@@ -9989,6 +10056,10 @@ function QueuedMessageDock({
                 !steerEnabled && styles.queuedMessageActionButtonDisabled,
                 pressed && steerEnabled && styles.queuedMessageActionButtonPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={steeringActive ? 'Steering queued message' : 'Steer queued message'}
+              accessibilityHint={steerDisabledReason ?? undefined}
+              accessibilityState={controlAccessibilityState({ disabled: !steerEnabled, busy: steeringActive })}
             >
               <Text
                 style={[

@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { ChatEngine } from '../api/types';
 import { ChatEngineIcon } from './ChatEngineIcon';
 import { useAppTheme, type AppTheme } from '../theme';
+import { decorativeAccessibilityProps } from '../accessibility';
 
 interface ChatHeaderProps {
   onOpenDrawer: () => void;
@@ -43,18 +44,27 @@ export function ChatHeader({
     <View style={styles.headerContainer}>
       <SafeAreaView edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <Pressable onPress={onOpenDrawer} hitSlop={8} style={styles.menuBtn}>
-            <Ionicons name="menu" size={20} color={colors.textPrimary} />
+          <Pressable
+            onPress={onOpenDrawer}
+            hitSlop={8}
+            style={styles.menuBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Open navigation drawer"
+          >
+            <Ionicons {...decorativeAccessibilityProps} name="menu" size={20} color={colors.textPrimary} />
           </Pressable>
           {onOpenTitleMenu ? (
             <Pressable
               onPress={onOpenTitleMenu}
               hitSlop={8}
               style={({ pressed }) => [styles.titleButton, pressed && styles.titleButtonPressed]}
+              accessibilityRole="button"
+              accessibilityLabel={`${titleDisplay}, chat options`}
+              accessibilityHint="Opens actions for this chat"
             >
               <ScrollableTitle title={titleDisplay} />
               {engineLabel ? <ChatEngineIcon engine={engine} size={18} /> : null}
-              <Ionicons name="chevron-down" size={12} color={colors.textMuted} />
+              <Ionicons {...decorativeAccessibilityProps} name="chevron-down" size={12} color={colors.textMuted} />
             </Pressable>
           ) : (
             <View style={styles.modelNameRow}>
@@ -65,11 +75,17 @@ export function ChatHeader({
           <View style={{ flex: 1 }} />
           {rightIconName ? (
             onRightActionPress ? (
-              <Pressable onPress={onRightActionPress} hitSlop={8} style={styles.rightBtn}>
-                <Ionicons name={rightIconName} size={18} color={colors.textMuted} />
+              <Pressable
+                onPress={onRightActionPress}
+                hitSlop={8}
+                style={styles.rightBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Open Git"
+              >
+                <Ionicons {...decorativeAccessibilityProps} name={rightIconName} size={18} color={colors.textMuted} />
               </Pressable>
             ) : (
-              <Ionicons name={rightIconName} size={18} color={colors.textMuted} />
+              <Ionicons {...decorativeAccessibilityProps} name={rightIconName} size={18} color={colors.textMuted} />
             )
           ) : null}
         </View>

@@ -26,6 +26,12 @@ import type {
   GitStatusResponse,
 } from '../api/types';
 import { useAppTheme, type AppTheme } from '../theme';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+  useModalAccessibilityFocus,
+} from '../accessibility';
 import { toApprovalPolicyForMode } from './mainScreenHelpers';
 import {
   parseUnifiedGitDiff,
@@ -80,6 +86,19 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
   const reviewCommentIdRef = useRef(0);
   const { height: windowHeight } = useWindowDimensions();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const reviewModalFocusRef = useModalAccessibilityFocus(reviewTarget !== null);
+  useAccessibilityAnnouncement(error);
+  useAccessibilityAnnouncement(
+    loading
+      ? 'Loading Git status'
+      : committing
+        ? 'Committing changes'
+        : pushing
+          ? 'Pushing changes'
+          : switchingBranch
+            ? 'Switching branch'
+            : null
+  );
 
   useEffect(() => {
     setActiveChat(chat);
@@ -672,8 +691,8 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Pressable onPress={onBack} hitSlop={8} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={22} color={theme.colors.textPrimary} />
+        <Pressable onPress={onBack} hitSlop={8} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Back to chat">
+          <Ionicons {...decorativeAccessibilityProps} name="chevron-back" size={22} color={theme.colors.textPrimary} />
         </Pressable>
         <View style={styles.headerTitles}>
           <Text style={styles.headerTitle}>Git</Text>
@@ -690,8 +709,11 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
             loading && styles.refreshBtnDisabled,
           ]}
           disabled={loading}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh Git status"
+          accessibilityState={controlAccessibilityState({ disabled: loading, busy: loading })}
         >
-          <Ionicons name="refresh" size={16} color={theme.colors.textMuted} />
+          <Ionicons {...decorativeAccessibilityProps} name="refresh" size={16} color={theme.colors.textMuted} />
         </Pressable>
       </View>
 
@@ -722,6 +744,7 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
             scrollEnabled={false}
             textAlignVertical="top"
             editable={!savingWorkspace}
+            accessibilityLabel="Git workspace path"
           />
 
           {!hasWorkspace ? (
@@ -733,13 +756,14 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
         </View>
 
         {loading ? (
-          <ActivityIndicator color={theme.colors.textPrimary} style={styles.loader} />
+          <ActivityIndicator accessibilityRole="progressbar" accessibilityLabel="Loading Git status" color={theme.colors.textPrimary} style={styles.loader} />
         ) : (
           <>
             <View style={styles.card}>
               <View style={styles.branchHeaderRow}>
                 <View style={styles.branchBadge}>
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name="git-branch-outline"
                     size={14}
                     color={theme.colors.textPrimary}
@@ -766,8 +790,12 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
                       branchPanelOpen && styles.branchSwitchToggleActive,
                       pressed && styles.branchSwitchTogglePressed,
                     ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Change branch"
+                    accessibilityState={controlAccessibilityState({ expanded: branchPanelOpen })}
                   >
                     <Ionicons
+                      {...decorativeAccessibilityProps}
                       name="swap-horizontal-outline"
                       size={14}
                       color={theme.colors.textPrimary}
@@ -820,6 +848,9 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
                               pressed && styles.branchRowPressed,
                               switchingBranch && styles.fileActionBtnDisabled,
                             ]}
+                            accessibilityRole="radio"
+                            accessibilityLabel={`${branch.name}, ${branchMeta}`}
+                            accessibilityState={{ checked: selected, disabled: switchingBranch }}
                           >
                             <View style={styles.branchRowTextBlock}>
                               <Text style={styles.branchRowName} numberOfLines={1}>
@@ -828,6 +859,7 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
                               <Text style={styles.branchRowMeta}>{branchMeta}</Text>
                             </View>
                             <Ionicons
+                              {...decorativeAccessibilityProps}
                               name={selected ? 'radio-button-on' : 'radio-button-off'}
                               size={18}
                               color={selected ? theme.colors.textPrimary : theme.colors.textMuted}
@@ -847,6 +879,8 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
                       pressed && styles.actionBtnPressed,
                       branchSwitchDisabled && styles.actionBtnDisabled,
                     ]}
+                    accessibilityRole="button"
+                    accessibilityState={controlAccessibilityState({ disabled: branchSwitchDisabled, busy: switchingBranch })}
                   >
                     <Text
                       style={[
@@ -917,7 +951,8 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
                 <View style={[styles.reviewCard, styles.reviewCardDirty]}>
                   <View style={styles.reviewHeader}>
                     <View style={styles.reviewIconWrap}>
-                      <Ionicons
+                        <Ionicons
+                          {...decorativeAccessibilityProps}
                         name={hasStagedFiles ? 'checkmark-done-circle-outline' : 'git-compare-outline'}
                         size={18}
                         color={theme.colors.textPrimary}
@@ -1049,6 +1084,8 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
                     pressed && styles.actionBtnPressed,
                     commitButtonDisabled && styles.actionBtnDisabled,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityState={controlAccessibilityState({ disabled: commitButtonDisabled, busy: committing })}
                 >
                   <Text
                     style={[
@@ -1076,6 +1113,8 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
                   pressed && styles.actionBtnPressed,
                   pushButtonDisabled && styles.actionBtnDisabled,
                 ]}
+                accessibilityRole="button"
+                accessibilityState={controlAccessibilityState({ disabled: pushButtonDisabled, busy: pushing })}
               >
                 <Text
                   style={[
@@ -1553,7 +1592,7 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
           </>
         )}
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorText}>{error}</Text> : null}
       </ScrollView>
 
       <Modal
@@ -1567,18 +1606,18 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
           style={styles.reviewModalBackdrop}
         >
           <Pressable style={StyleSheet.absoluteFill} onPress={closeReviewComment} />
-          <View style={styles.reviewModalCard}>
+          <View accessibilityViewIsModal importantForAccessibility="yes" style={styles.reviewModalCard}>
             <View style={styles.reviewModalHeader}>
               <View style={styles.reviewModalTitleBlock}>
-                <Text style={styles.reviewModalEyebrow}>Inline comment</Text>
+                <Text ref={reviewModalFocusRef} accessibilityRole="header" style={styles.reviewModalEyebrow}>Inline comment</Text>
                 <Text style={styles.reviewModalTitle} numberOfLines={2}>
                   {reviewTarget
                     ? `${reviewTarget.path} · ${reviewTarget.side} ${String(reviewTarget.line)}`
                     : ''}
                 </Text>
               </View>
-              <Pressable onPress={closeReviewComment} hitSlop={8}>
-                <Ionicons name="close" size={20} color={theme.colors.textMuted} />
+              <Pressable onPress={closeReviewComment} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close inline comment">
+                <Ionicons {...decorativeAccessibilityProps} name="close" size={20} color={theme.colors.textMuted} />
               </Pressable>
             </View>
             <TextInput
@@ -1591,6 +1630,7 @@ export function GitScreen({ api, chat, approvalMode, onBack, onChatUpdated }: Gi
               multiline
               textAlignVertical="top"
               style={styles.reviewCommentInput}
+              accessibilityLabel="Review comment"
             />
             <View style={styles.reviewModalActions}>
               <Pressable onPress={closeReviewComment} style={styles.reviewModalCancel}>

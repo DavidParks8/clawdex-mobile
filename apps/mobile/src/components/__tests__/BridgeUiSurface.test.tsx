@@ -82,6 +82,11 @@ describe('BridgeUiWorkflowCard', () => {
     expect(findText(root, '40% complete')).toBe(true);
 
     const toggleButton = findPressableByLabel(root, 'Collapse surface');
+    expect(toggleButton.props.accessibilityRole).toBe('button');
+    expect(toggleButton.props.accessibilityState).toEqual({
+      disabled: false,
+      expanded: true,
+    });
     act(() => {
       readOnPress(toggleButton.props)();
     });
@@ -93,6 +98,10 @@ describe('BridgeUiWorkflowCard', () => {
 
     act(() => {
       readOnPress(findPressableByLabel(root, 'Expand surface').props)();
+    });
+    expect(findPressableByLabel(root, 'Collapse surface').props.accessibilityState).toEqual({
+      disabled: false,
+      expanded: true,
     });
     expect(findText(root, 'Status')).toBe(true);
 

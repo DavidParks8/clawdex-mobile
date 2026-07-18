@@ -13,6 +13,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme, type AppTheme } from '../theme';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+  useModalAccessibilityFocus,
+} from '../accessibility';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 
@@ -86,6 +92,8 @@ export function SelectionSheet({
     windowHeight - Math.max(insets.top + spacing.xl, 72) - Math.max(insets.bottom + spacing.xl, 72)
   );
   const defaultListMaxHeight = Math.max(84, defaultCardMaxHeight - 168);
+  const modalFocusRef = useModalAccessibilityFocus(visible);
+  useAccessibilityAnnouncement(visible && loading ? loadingLabel : null);
 
   return (
     <Modal
@@ -96,7 +104,13 @@ export function SelectionSheet({
       onRequestClose={onClose}
     >
       <View style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel={`Close ${title}`}
+          accessibilityHint="Dismisses this selection sheet"
+        />
         <View
           style={[
             styles.sheetOuter,
@@ -113,6 +127,8 @@ export function SelectionSheet({
           ]}
         >
           <View
+            accessibilityViewIsModal
+            importantForAccessibility="yes"
             style={[
               styles.sheetCard,
               expanded && styles.sheetCardExpanded,
@@ -121,9 +137,15 @@ export function SelectionSheet({
                 : { maxHeight: defaultCardMaxHeight },
             ]}
           >
-            <View style={styles.handle} />
+            <View {...decorativeAccessibilityProps} style={styles.handle} />
 
-            <View style={styles.header}>
+            <View
+              ref={modalFocusRef}
+              accessible
+              accessibilityRole="header"
+              accessibilityLabel={[title, subtitle].filter(Boolean).join('. ')}
+              style={styles.header}
+            >
               {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
               <Text style={styles.title}>{title}</Text>
               {subtitle ? (
@@ -142,7 +164,12 @@ export function SelectionSheet({
               ]}
             >
               {loading ? (
-                <View style={styles.loadingState}>
+                <View
+                  style={styles.loadingState}
+                  accessibilityRole="progressbar"
+                  accessibilityLiveRegion="polite"
+                  accessibilityLabel={loadingLabel}
+                >
                   <ActivityIndicator color={colors.textPrimary} />
                   <Text style={styles.loadingLabel}>{loadingLabel}</Text>
                 </View>
@@ -178,6 +205,13 @@ export function SelectionSheet({
                         key={option.key}
                         disabled={option.disabled}
                         onPress={option.onPress}
+                        accessibilityRole="button"
+                        accessibilityLabel={option.title}
+                        accessibilityHint={option.description}
+                        accessibilityState={controlAccessibilityState({
+                          disabled: option.disabled,
+                          selected: option.selected,
+                        })}
                         style={({ pressed }) => [
                           styles.option,
                           option.selected && styles.optionSelected,
@@ -194,7 +228,12 @@ export function SelectionSheet({
                                 tone === 'danger' && styles.iconWrapDanger,
                               ]}
                             >
-                              <Ionicons name={option.icon} size={15} color={iconColor} />
+                              <Ionicons
+                                {...decorativeAccessibilityProps}
+                                name={option.icon}
+                                size={15}
+                                color={iconColor}
+                              />
                             </View>
                           ) : null}
 
@@ -250,6 +289,7 @@ export function SelectionSheet({
                           ) : null}
                           {option.selected ? (
                             <Ionicons
+                              {...decorativeAccessibilityProps}
                               name="checkmark-circle"
                               size={18}
                               color={colors.textPrimary}
@@ -262,7 +302,9 @@ export function SelectionSheet({
                 </ScrollView>
               ) : (
                 <View style={styles.loadingState}>
-                  <Text style={styles.loadingLabel}>{emptyLabel}</Text>
+                  <Text accessibilityLiveRegion="polite" style={styles.loadingLabel}>
+                    {emptyLabel}
+                  </Text>
                 </View>
               )}
             </View>
@@ -270,6 +312,8 @@ export function SelectionSheet({
             <View style={styles.footer}>
               <Pressable
                 onPress={onClose}
+                accessibilityRole="button"
+                accessibilityLabel={closeLabel}
                 style={({ pressed }) => [
                   styles.closeButton,
                   pressed && styles.closeButtonPressed,

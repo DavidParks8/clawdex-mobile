@@ -19,6 +19,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { FileSystemEntry, WorkspaceSummary } from '../api/types';
 import { useAppTheme, type AppTheme } from '../theme';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+  useModalAccessibilityFocus,
+} from '../accessibility';
 
 interface WorkspacePickerModalProps {
   visible: boolean;
@@ -153,6 +159,11 @@ export function WorkspacePickerModal({
   const hasFavoriteWorkspaces = favoriteWorkspaces.length > 0;
   const compactFavoriteWorkspaces = favoriteWorkspaces.slice(0, 4);
   const hasVisibleEntries = filteredEntries.length > 0;
+  const modalFocusRef = useModalAccessibilityFocus(visible);
+  useAccessibilityAnnouncement(visible ? error ?? truncationMessage : null);
+  useAccessibilityAnnouncement(
+    visible && loadingEntries ? `Loading folders in ${currentFolderTitle}` : null
+  );
 
   const handleBrowsePath = (path: string | null) => {
     setPendingSelectionPath(path);
@@ -172,17 +183,28 @@ export function WorkspacePickerModal({
       onRequestClose={onClose}
     >
       <View style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close workspace picker"
+        />
         <View style={[styles.outer, { paddingTop: topInset, paddingBottom: bottomInset }]}>
-          <View style={[styles.card, { height: cardHeight }]}>
+          <View
+            accessibilityViewIsModal
+            importantForAccessibility="yes"
+            style={[styles.card, { height: cardHeight }]}
+          >
             <View style={styles.header}>
               <View style={styles.headerSpacer} />
-              <Text style={styles.title}>Choose Workspace</Text>
+              <Text ref={modalFocusRef} accessibilityRole="header" style={styles.title}>Choose Workspace</Text>
               <Pressable
                 onPress={onClose}
                 style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Close workspace picker"
               >
-                <Ionicons name="close" size={18} color={theme.colors.textSecondary} />
+                <Ionicons {...decorativeAccessibilityProps} name="close" size={18} color={theme.colors.textSecondary} />
               </Pressable>
             </View>
 
@@ -203,6 +225,9 @@ export function WorkspacePickerModal({
                       selectedPath === null && styles.defaultButtonSelected,
                       pressed && styles.pressed,
                     ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Use default workspace"
+                    accessibilityState={controlAccessibilityState({ selected: selectedPath === null })}
                   >
                     <Text
                       style={[
@@ -216,7 +241,7 @@ export function WorkspacePickerModal({
                 </View>
 
                 <View style={styles.searchField}>
-                  <Ionicons name="search" size={16} color={theme.colors.textMuted} />
+                  <Ionicons {...decorativeAccessibilityProps} name="search" size={16} color={theme.colors.textMuted} />
                   <TextInput
                     value={searchQuery}
                     onChangeText={setSearchQuery}
@@ -227,6 +252,7 @@ export function WorkspacePickerModal({
                     autoCapitalize="none"
                     autoCorrect={false}
                     returnKeyType="search"
+                    accessibilityLabel="Search folders"
                   />
                 </View>
 
@@ -239,9 +265,14 @@ export function WorkspacePickerModal({
                       actionDisabled && styles.buttonDisabled,
                       pressed && !actionDisabled && styles.pressed,
                     ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={actionLabel}
+                    accessibilityHint={actionDescription ?? 'Clones a repository into this folder'}
+                    accessibilityState={controlAccessibilityState({ disabled: actionDisabled })}
                   >
                     <View style={styles.actionIconWrap}>
                       <Ionicons
+                        {...decorativeAccessibilityProps}
                         name="git-branch-outline"
                         size={16}
                         color={theme.colors.textSecondary}
@@ -255,6 +286,7 @@ export function WorkspacePickerModal({
                       </Text>
                     </View>
                     <Ionicons
+                      {...decorativeAccessibilityProps}
                       name="chevron-forward"
                       size={14}
                       color={theme.colors.textMuted}
@@ -298,8 +330,13 @@ export function WorkspacePickerModal({
                         (!loadingEntries || hasVisibleEntries) &&
                         styles.pressed,
                     ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Go to parent folder"
+                    accessibilityState={controlAccessibilityState({
+                      disabled: !parentPath || (loadingEntries && !hasVisibleEntries),
+                    })}
                   >
-                    <Ionicons name="return-up-back" size={14} color={theme.colors.textSecondary} />
+                    <Ionicons {...decorativeAccessibilityProps} name="return-up-back" size={14} color={theme.colors.textSecondary} />
                     <Text style={styles.upButtonText}>Up</Text>
                   </Pressable>
 
@@ -317,9 +354,9 @@ export function WorkspacePickerModal({
                   </View>
                 </View>
 
-                {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                {error ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorText}>{error}</Text> : null}
                 {truncationMessage ? (
-                  <Text style={styles.errorText}>{truncationMessage}</Text>
+                  <Text accessibilityLiveRegion="polite" style={styles.errorText}>{truncationMessage}</Text>
                 ) : null}
               </ScrollView>
 
@@ -363,9 +400,13 @@ export function WorkspacePickerModal({
                             styles.rowMainAction,
                             pressed && styles.pressed,
                           ]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Open folder ${entry.name}`}
+                          accessibilityHint={onToggleFavorite ? 'Long press to pin or unpin this workspace' : undefined}
                         >
                           <View style={styles.entryIconWrap}>
                             <Ionicons
+                              {...decorativeAccessibilityProps}
                               name={entry.isGitRepo ? 'git-branch-outline' : 'folder-outline'}
                               size={18}
                               color={theme.colors.textSecondary}
@@ -377,6 +418,7 @@ export function WorkspacePickerModal({
                             </Text>
                           </View>
                           <Ionicons
+                            {...decorativeAccessibilityProps}
                             name="chevron-forward"
                             size={15}
                             color={theme.colors.textMuted}
@@ -419,8 +461,15 @@ export function WorkspacePickerModal({
                     (!footerPath || !onToggleFavorite) && styles.buttonDisabled,
                     pressed && footerPath && onToggleFavorite && styles.footerFavoriteButtonPressed,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={footerIsFavorite ? `Unpin ${footerTitle}` : `Pin ${footerTitle}`}
+                  accessibilityState={controlAccessibilityState({
+                    disabled: !footerPath || !onToggleFavorite,
+                    selected: footerIsFavorite,
+                  })}
                 >
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name={footerIsFavorite ? 'star' : 'star-outline'}
                     size={17}
                     color={
@@ -438,6 +487,9 @@ export function WorkspacePickerModal({
                       Boolean(footerPath) &&
                       styles.footerUseButtonPressed,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Use ${footerTitle} workspace`}
+                  accessibilityState={controlAccessibilityState({ disabled: !footerPath })}
                 >
                   <Text style={styles.footerUseButtonText}>Use</Text>
                 </Pressable>
@@ -481,11 +533,16 @@ function WorkspaceTile({
         styles.workspaceTile,
         selected && styles.workspaceTileSelected,
       ]}
+      accessibilityRole="button"
+      accessibilityLabel={`${toPathBasename(workspace.path)}, ${formatWorkspaceMeta(workspace)}`}
+      accessibilityHint="Opens this workspace. Long press to pin or unpin."
+      accessibilityState={controlAccessibilityState({ selected })}
     >
       {({ pressed }) => (
         <View style={[styles.workspaceTileContent, pressed && styles.pressed]}>
           <View style={styles.workspaceTileHeader}>
             <Ionicons
+              {...decorativeAccessibilityProps}
               name={iconName}
               size={13}
               color={theme.colors.textSecondary}
@@ -549,7 +606,12 @@ function LoadingRow({
   const theme = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   return (
-    <View style={[styles.statusRow, compact && styles.statusRowCompact]}>
+    <View
+      style={[styles.statusRow, compact && styles.statusRowCompact]}
+      accessibilityRole="progressbar"
+      accessibilityLabel={label}
+      accessibilityLiveRegion="polite"
+    >
       <ActivityIndicator color={theme.colors.textPrimary} />
       <Text style={styles.statusText}>{label}</Text>
     </View>

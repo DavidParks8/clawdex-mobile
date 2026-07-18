@@ -31,6 +31,12 @@ import { HostBridgeWsClient } from '../api/ws';
 import { BrandMark } from '../components/BrandMark';
 import { ChoiceAction } from '../components/ChoiceAction';
 import { useAppTheme, type AppTheme } from '../theme';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+  useModalAccessibilityFocus,
+} from '../accessibility';
 import codexMarkPng from '../../assets/brand/engine-codex.png';
 import cursorMarkPng from '../../assets/brand/engine-cursor.png';
 import opencodeMarkPng from '../../assets/brand/engine-opencode.png';
@@ -501,14 +507,24 @@ export function OnboardingScreen({
     },
     [applyPairingPayload, scannerLocked]
   );
+  const scannerFocusRef = useModalAccessibilityFocus(scannerVisible);
+  useAccessibilityAnnouncement(formError ?? scannerError);
+  useAccessibilityAnnouncement(
+    checkingConnection
+      ? 'Testing bridge connection'
+      : connectionCheck.kind === 'success'
+        ? connectionCheck.message
+        : null
+  );
 
   return (
     <View style={styles.container}>
       <LinearGradient
+        {...decorativeAccessibilityProps}
         colors={onboardingBackgroundGradient}
         style={StyleSheet.absoluteFill}
       />
-      <View pointerEvents="none" style={styles.ambientCanvas}>
+      <View {...decorativeAccessibilityProps} pointerEvents="none" style={styles.ambientCanvas}>
         <LinearGradient
           colors={ambientPrimaryGradient}
           style={styles.ambientOrbPrimary}
@@ -542,6 +558,7 @@ export function OnboardingScreen({
                       >
                         <View style={[styles.introHeroEngineCard, styles.introHeroEngineCardCodex]}>
                           <Image
+                            {...decorativeAccessibilityProps}
                             source={codexMarkPng}
                             resizeMode="contain"
                             style={styles.introHeroEngineCardLogo}
@@ -549,6 +566,7 @@ export function OnboardingScreen({
                         </View>
                         <View style={[styles.introHeroEngineCard, styles.introHeroEngineCardCursor]}>
                           <Image
+                            {...decorativeAccessibilityProps}
                             source={cursorMarkPng}
                             resizeMode="contain"
                             style={styles.introHeroEngineCardLogo}
@@ -558,6 +576,7 @@ export function OnboardingScreen({
                           style={[styles.introHeroEngineCard, styles.introHeroEngineCardOpenCode]}
                         >
                           <Image
+                            {...decorativeAccessibilityProps}
                             source={opencodeMarkPng}
                             resizeMode="contain"
                             style={[
@@ -625,12 +644,13 @@ export function OnboardingScreen({
                           pressed && styles.cancelBtnPressed,
                         ]}
                       >
-                        <Ionicons name="chevron-back" size={15} color={theme.colors.textPrimary} />
+                        <Ionicons {...decorativeAccessibilityProps} name="chevron-back" size={15} color={theme.colors.textPrimary} />
                         <Text style={styles.connectTopButtonText}>Back</Text>
                       </Pressable>
                     ) : (
                       <View style={styles.heroIconWrap}>
                         <Ionicons
+                          {...decorativeAccessibilityProps}
                           name="hardware-chip-outline"
                           size={20}
                           color={theme.colors.textPrimary}
@@ -644,8 +664,10 @@ export function OnboardingScreen({
                         onPress={onCancel}
                         hitSlop={8}
                         style={({ pressed }) => [styles.cancelBtn, pressed && styles.cancelBtnPressed]}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel connection setup"
                       >
-                        <Ionicons name="close" size={16} color={theme.colors.textPrimary} />
+                        <Ionicons {...decorativeAccessibilityProps} name="close" size={16} color={theme.colors.textPrimary} />
                       </Pressable>
                     ) : null}
                   </View>
@@ -676,7 +698,7 @@ export function OnboardingScreen({
                         pressed && styles.scanButtonPressed,
                       ]}
                     >
-                      <Ionicons name="qr-code-outline" size={16} color={theme.colors.textPrimary} />
+                      <Ionicons {...decorativeAccessibilityProps} name="qr-code-outline" size={16} color={theme.colors.textPrimary} />
                       <Text style={styles.scanButtonText}>Scan QR</Text>
                     </Pressable>
                   </View>
@@ -685,7 +707,7 @@ export function OnboardingScreen({
                     <Text style={styles.label}>URL</Text>
                     <View style={styles.inputRow}>
                       <View style={styles.inputIconWrap}>
-                        <Ionicons name="globe-outline" size={16} color={theme.colors.textSecondary} />
+                        <Ionicons {...decorativeAccessibilityProps} name="globe-outline" size={16} color={theme.colors.textSecondary} />
                       </View>
                       <TextInput
                         value={urlInput}
@@ -705,6 +727,7 @@ export function OnboardingScreen({
                         onSubmitEditing={() => {
                           void handleSave();
                         }}
+                        accessibilityLabel="Bridge URL"
                       />
                     </View>
                   </View>
@@ -714,7 +737,7 @@ export function OnboardingScreen({
                     <View style={styles.tokenInputWrap}>
                       <View style={styles.inputRow}>
                         <View style={styles.inputIconWrap}>
-                          <Ionicons name="key-outline" size={16} color={theme.colors.textSecondary} />
+                          <Ionicons {...decorativeAccessibilityProps} name="key-outline" size={16} color={theme.colors.textSecondary} />
                         </View>
                         <TextInput
                           value={tokenInput}
@@ -734,6 +757,7 @@ export function OnboardingScreen({
                           onSubmitEditing={() => {
                             void handleSave();
                           }}
+                          accessibilityLabel="Bridge token"
                         />
                       </View>
                       <Pressable
@@ -742,8 +766,12 @@ export function OnboardingScreen({
                           styles.tokenRevealBtn,
                           pressed && styles.tokenRevealBtnPressed,
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={tokenHidden ? 'Show bridge token' : 'Hide bridge token'}
+                        accessibilityState={controlAccessibilityState({ expanded: !tokenHidden })}
                       >
                         <Ionicons
+                          {...decorativeAccessibilityProps}
                           name={tokenHidden ? 'eye-outline' : 'eye-off-outline'}
                           size={16}
                           color={theme.colors.textSecondary}
@@ -796,11 +824,13 @@ export function OnboardingScreen({
                         pressed && !checkingConnection && styles.secondaryButtonPressed,
                         checkingConnection && styles.secondaryButtonDisabled,
                       ]}
+                      accessibilityRole="button"
+                      accessibilityState={controlAccessibilityState({ disabled: checkingConnection, busy: checkingConnection })}
                     >
                       {checkingConnection ? (
                         <ActivityIndicator size="small" color={theme.colors.textPrimary} />
                       ) : (
-                        <Ionicons name="pulse-outline" size={16} color={theme.colors.textPrimary} />
+                        <Ionicons {...decorativeAccessibilityProps} name="pulse-outline" size={16} color={theme.colors.textPrimary} />
                       )}
                       <Text style={styles.secondaryButtonText}>Test Connection</Text>
                     </Pressable>
@@ -819,6 +849,10 @@ export function OnboardingScreen({
                     pressed && !checkingConnection && styles.primaryButtonPressed,
                     checkingConnection && styles.primaryButtonDisabled,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={continueLabel}
+                  accessibilityHint="Saves this private bridge connection"
+                  accessibilityState={controlAccessibilityState({ disabled: checkingConnection, busy: checkingConnection })}
                 >
                   {checkingConnection ? (
                     <View style={styles.primaryButtonIconWrap}>
@@ -827,6 +861,7 @@ export function OnboardingScreen({
                   ) : (
                     <View style={styles.primaryButtonIconWrap}>
                       <Ionicons
+                        {...decorativeAccessibilityProps}
                         name="shield-checkmark-outline"
                         size={18}
                         color={theme.colors.accentText}
@@ -838,7 +873,7 @@ export function OnboardingScreen({
                       <Text style={styles.primaryButtonText}>{continueLabel}</Text>
                       <Text style={styles.primaryButtonSubtext}>Start using Clawdex</Text>
                     </View>
-                    <Ionicons name="arrow-forward" size={20} color={theme.colors.accentText} />
+                    <Ionicons {...decorativeAccessibilityProps} name="arrow-forward" size={20} color={theme.colors.accentText} />
                   </View>
                 </Pressable>
               </View>
@@ -855,6 +890,7 @@ export function OnboardingScreen({
               accessibilityLabel="Close QR scanner"
               onPress={closeScanner}
               style={styles.scannerModalRoot}
+              accessibilityViewIsModal
             >
               <Pressable
                 accessibilityRole="none"
@@ -864,7 +900,7 @@ export function OnboardingScreen({
                 style={styles.scannerSheet}
               >
                 <View style={styles.scannerHeader}>
-                  <Text style={styles.scannerTitle}>Scan Pairing QR</Text>
+                  <Text ref={scannerFocusRef} accessibilityRole="header" style={styles.scannerTitle}>Scan Pairing QR</Text>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Close QR scanner"
@@ -875,7 +911,7 @@ export function OnboardingScreen({
                       pressed && styles.scannerCloseBtnPressed,
                     ]}
                   >
-                    <Ionicons name="close" size={18} color={theme.colors.textPrimary} />
+                    <Ionicons {...decorativeAccessibilityProps} name="close" size={18} color={theme.colors.textPrimary} />
                   </Pressable>
                 </View>
                 <View style={styles.scannerCameraFrame}>
@@ -896,7 +932,7 @@ export function OnboardingScreen({
                 <Text style={styles.scannerHintText}>
                   Scan the pairing QR to fill the URL and token.
                 </Text>
-                {scannerError ? <Text style={styles.errorText}>{scannerError}</Text> : null}
+                {scannerError ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.errorText}>{scannerError}</Text> : null}
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Cancel QR scan"
@@ -1067,6 +1103,8 @@ function StatusBanner({
 
   return (
     <View
+      accessibilityRole={tone === 'error' ? 'alert' : undefined}
+      accessibilityLiveRegion={tone === 'error' ? 'assertive' : 'polite'}
       style={[
         styles.statusBanner,
         tone === 'warning'
@@ -1077,6 +1115,7 @@ function StatusBanner({
       ]}
     >
       <Ionicons
+        {...decorativeAccessibilityProps}
         name={icon}
         size={16}
         color={iconColor}

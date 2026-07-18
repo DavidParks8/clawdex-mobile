@@ -53,6 +53,12 @@ import {
 } from '../browserPreview';
 import { BrowserPreviewSessionLifecycle } from '../browserPreviewSessionLifecycle';
 import { useAppTheme, type AppTheme } from '../theme';
+import {
+  controlAccessibilityState,
+  decorativeAccessibilityProps,
+  useAccessibilityAnnouncement,
+  useModalAccessibilityFocus,
+} from '../accessibility';
 
 interface BrowserScreenProps {
   api: HostBridgeApiClient;
@@ -156,6 +162,9 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
     previewUrl: string;
     height: number;
   } | null>(null);
+  const viewportMenuFocusRef = useModalAccessibilityFocus(showViewportMenu);
+  useAccessibilityAnnouncement(capabilitiesError);
+  useAccessibilityAnnouncement(openingPreview ? 'Opening local preview' : null);
 
   const previewOrigin = useMemo(
     () =>
@@ -955,12 +964,13 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
       <SafeAreaView edges={['top']} style={styles.safeArea}>
         <View style={styles.chrome}>
           <View style={styles.topBar}>
-            <Pressable onPress={onOpenDrawer} hitSlop={8} style={styles.chromeButton}>
-              <Ionicons name="menu" size={20} color={colors.textPrimary} />
+            <Pressable onPress={onOpenDrawer} hitSlop={8} style={styles.chromeButton} accessibilityRole="button" accessibilityLabel="Open navigation drawer">
+              <Ionicons {...decorativeAccessibilityProps} name="menu" size={20} color={colors.textPrimary} />
             </Pressable>
 
             <View style={styles.omnibox}>
               <Ionicons
+                {...decorativeAccessibilityProps}
                 name={previewUrl ? 'globe-outline' : 'search-outline'}
                 size={16}
                 color={colors.textMuted}
@@ -974,6 +984,8 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                 placeholderTextColor={colors.textMuted}
                 style={styles.omniboxInput}
                 onSubmitEditing={handleSubmitInput}
+                accessibilityLabel="Preview address"
+                accessibilityHint="Enter a localhost address or port"
               />
               {inputValue.length > 0 ? (
                 <Pressable
@@ -983,8 +995,10 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                     styles.omniboxIconButton,
                     pressed && styles.iconButtonPressed,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear preview address"
                 >
-                  <Ionicons name="close" size={14} color={colors.textMuted} />
+                  <Ionicons {...decorativeAccessibilityProps} name="close" size={14} color={colors.textMuted} />
                 </Pressable>
               ) : null}
               <Pressable
@@ -995,6 +1009,9 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                   submitDisabled && styles.submitButtonDisabled,
                   pressed && supportsBrowserPreview && !openingPreview && styles.submitButtonPressed,
                 ]}
+                accessibilityRole="button"
+                accessibilityLabel={openingPreview ? 'Opening preview' : 'Open preview'}
+                accessibilityState={controlAccessibilityState({ disabled: submitDisabled, busy: openingPreview })}
               >
                 {openingPreview ? (
                   <ActivityIndicator
@@ -1003,6 +1020,7 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                   />
                 ) : (
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name="arrow-forward"
                     size={16}
                     color={submitDisabled ? colors.textMuted : colors.accentText}
@@ -1033,6 +1051,9 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                         viewportPreset === mode.key && styles.viewportPresetChipActive,
                         pressed && styles.viewportPresetChipPressed,
                       ]}
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: viewportPreset === mode.key }}
+                      accessibilityLabel={`${mode.label} viewport`}
                     >
                       <Text
                         style={[
@@ -1052,8 +1073,12 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                     (desktopModeEnabled || showViewportMenu) && styles.viewportPresetChipActive,
                     pressed && styles.viewportPresetChipPressed,
                   ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Viewport size, ${desktopViewportLabel}`}
+                  accessibilityState={controlAccessibilityState({ expanded: showViewportMenu })}
                 >
                   <Ionicons
+                    {...decorativeAccessibilityProps}
                     name="options-outline"
                     size={14}
                     color={
@@ -1093,14 +1118,14 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
           animationType="fade"
           onRequestClose={handleCloseViewportMenu}
         >
-          <Pressable style={styles.viewportMenuBackdrop} onPress={handleCloseViewportMenu}>
+          <Pressable style={styles.viewportMenuBackdrop} onPress={handleCloseViewportMenu} accessibilityRole="button" accessibilityLabel="Close viewport menu">
             <KeyboardAvoidingView
               behavior={Platform.OS === 'ios' ? 'position' : undefined}
               style={styles.viewportMenuKeyboardLayer}
             >
-              <Pressable style={styles.viewportMenuCard} onPress={() => {}}>
+              <Pressable accessibilityViewIsModal importantForAccessibility="yes" style={styles.viewportMenuCard} onPress={() => {}}>
                 <View style={styles.viewportMenuHeader}>
-                  <Text style={styles.viewportMenuTitle}>Viewport</Text>
+                  <Text ref={viewportMenuFocusRef} accessibilityRole="header" style={styles.viewportMenuTitle}>Viewport</Text>
                   <Text style={styles.viewportMenuSubtitle}>
                     Applies to Desktop.
                   </Text>
@@ -1120,6 +1145,8 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                           active && styles.viewportPresetChipActive,
                           pressed && styles.viewportPresetChipPressed,
                         ]}
+                        accessibilityRole="radio"
+                        accessibilityState={{ checked: active }}
                       >
                         <Text
                           style={[
@@ -1141,6 +1168,8 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                         styles.viewportPresetChipActive,
                       pressed && styles.viewportPresetChipPressed,
                     ]}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: showCustomViewportEditor || !desktopViewportMatchesPreset }}
                   >
                     <Text
                       style={[
@@ -1168,6 +1197,7 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                         style={styles.viewportFieldInput}
                         placeholder="1920"
                         placeholderTextColor={colors.textMuted}
+                        accessibilityLabel="Viewport width"
                       />
                     </View>
                     <View style={styles.viewportField}>
@@ -1183,6 +1213,7 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                         style={styles.viewportFieldInput}
                         placeholder="1080"
                         placeholderTextColor={colors.textMuted}
+                        accessibilityLabel="Viewport height"
                       />
                     </View>
                     <Pressable
@@ -1191,6 +1222,7 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                         styles.viewportApplyButton,
                         pressed && styles.viewportApplyButtonPressed,
                       ]}
+                      accessibilityRole="button"
                     >
                       <Text style={styles.viewportApplyButtonText}>Apply</Text>
                     </Pressable>
@@ -1432,7 +1464,7 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
               )}
               {loadingPreview ||
               (desktopOverviewEnabled && !nativeOverviewShellEnabled && !overviewReady) ? (
-                <View style={styles.loadingOverlay}>
+                <View style={styles.loadingOverlay} accessibilityRole="progressbar" accessibilityLabel="Loading preview" accessibilityLiveRegion="polite">
                   <ActivityIndicator color={colors.textPrimary} />
                   <Text style={styles.loadingText}>Loading preview</Text>
                 </View>
@@ -1464,7 +1496,7 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                   <Text style={styles.sectionSubtitle}>Detected local web servers.</Text>
                 </View>
                 {suggestionsLoading ? (
-                  <View style={styles.loadingInline}>
+                  <View style={styles.loadingInline} accessibilityRole="progressbar" accessibilityLabel="Scanning local web servers" accessibilityLiveRegion="polite">
                     <ActivityIndicator color={colors.textPrimary} />
                     <Text style={styles.loadingInlineText}>Scanning local web servers…</Text>
                   </View>
@@ -1532,8 +1564,11 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                 (Platform.OS === 'web' || !canGoBack) && styles.navButtonDisabled,
                 pressed && Platform.OS !== 'web' && canGoBack && styles.iconButtonPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+              accessibilityState={controlAccessibilityState({ disabled: Platform.OS === 'web' || !canGoBack })}
             >
-              <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+              <Ionicons {...decorativeAccessibilityProps} name="chevron-back" size={22} color={colors.textPrimary} />
             </Pressable>
             <Pressable
               onPress={handleGoForwardPress}
@@ -1543,8 +1578,11 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                 (Platform.OS === 'web' || !canGoForward) && styles.navButtonDisabled,
                 pressed && Platform.OS !== 'web' && canGoForward && styles.iconButtonPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel="Forward"
+              accessibilityState={controlAccessibilityState({ disabled: Platform.OS === 'web' || !canGoForward })}
             >
-              <Ionicons name="chevron-forward" size={22} color={colors.textPrimary} />
+              <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={22} color={colors.textPrimary} />
             </Pressable>
             <Pressable
               onPress={handleReload}
@@ -1553,8 +1591,12 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                 styles.bottomNavButtonPrimary,
                 pressed && styles.bottomNavButtonPrimaryPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={loadingPreview ? 'Preview loading' : previewUrl ? 'Reload preview' : 'Scan for local previews'}
+              accessibilityState={controlAccessibilityState({ busy: loadingPreview })}
             >
               <Ionicons
+                {...decorativeAccessibilityProps}
                 name={loadingPreview ? 'hourglass-outline' : 'refresh-outline'}
                 size={20}
                 color={colors.textPrimary}
@@ -1566,8 +1608,11 @@ export const BrowserScreen = forwardRef<BrowserScreenHandle, BrowserScreenProps>
                 styles.bottomNavButton,
                 pressed && styles.iconButtonPressed,
               ]}
+              accessibilityRole="button"
+              accessibilityLabel={previewUrl ? 'Show preview start page' : 'Scan for local previews'}
             >
               <Ionicons
+                {...decorativeAccessibilityProps}
                 name={previewUrl ? 'home-outline' : 'scan-outline'}
                 size={20}
                 color={colors.textPrimary}
@@ -1594,12 +1639,14 @@ function StatusBanner({
 
   return (
     <View
+      accessibilityRole={tone === 'error' ? 'alert' : undefined}
+      accessibilityLiveRegion={tone === 'error' ? 'assertive' : 'polite'}
       style={[
         styles.statusBanner,
         tone === 'warning' ? styles.statusBannerWarning : styles.statusBannerError,
       ]}
     >
-      <Ionicons name={icon} size={16} color={color} />
+      <Ionicons {...decorativeAccessibilityProps} name={icon} size={16} color={color} />
       <Text
         style={[
           styles.statusBannerText,
@@ -1629,13 +1676,15 @@ function QuickTargetTile({
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}, ${subtitle}`}
       style={({ pressed }) => [
         styles.quickTile,
         pressed && styles.quickTilePressed,
       ]}
     >
       <View style={styles.quickTileIcon}>
-        <Ionicons name={icon} size={16} color={theme.colors.textPrimary} />
+        <Ionicons {...decorativeAccessibilityProps} name={icon} size={16} color={theme.colors.textPrimary} />
       </View>
       <Text style={styles.quickTileTitle} numberOfLines={1}>
         {title}
