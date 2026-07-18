@@ -3,7 +3,7 @@ use std::{collections::HashSet, env, path::PathBuf};
 use axum::http::HeaderMap;
 use reqwest::Url;
 
-use crate::{normalize_path, BridgeRuntimeEngine};
+use crate::{path_policy::PathPolicy, BridgeRuntimeEngine};
 
 pub(crate) const DEFAULT_WS_MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 pub(crate) const DEFAULT_WS_MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
@@ -263,21 +263,7 @@ pub(crate) fn constant_time_eq(left: &str, right: &str) -> bool {
 }
 
 pub(crate) fn resolve_bridge_workdir(raw_workdir: PathBuf) -> Result<PathBuf, String> {
-    if !raw_workdir.is_absolute() {
-        return Err(format!(
-            "BRIDGE_WORKDIR must be an absolute path (got: {})",
-            raw_workdir.to_string_lossy()
-        ));
-    }
-
-    let canonical = std::fs::canonicalize(&raw_workdir).map_err(|error| {
-        format!(
-            "BRIDGE_WORKDIR is invalid or inaccessible ({}): {error}",
-            raw_workdir.to_string_lossy()
-        )
-    })?;
-
-    Ok(normalize_path(&canonical))
+    PathPolicy::new(raw_workdir, false).map(|policy| policy.root().to_path_buf())
 }
 
 pub(crate) fn parse_bool_env(name: &str) -> bool {

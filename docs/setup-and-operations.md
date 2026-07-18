@@ -208,14 +208,16 @@ npm run teardown -- --yes
 | `BRIDGE_OPENCODE_PORT` | loopback port for spawned opencode server |
 | `BRIDGE_OPENCODE_SERVER_USERNAME` | basic-auth username passed to opencode server |
 | `BRIDGE_OPENCODE_SERVER_PASSWORD` | basic-auth password passed to opencode server |
-| `BRIDGE_WORKDIR` | absolute working directory for terminal/git |
-| `BRIDGE_ALLOW_OUTSIDE_ROOT_CWD` | allow terminal/git `cwd` outside `BRIDGE_WORKDIR` |
+| `BRIDGE_WORKDIR` | absolute, canonical root for host path access and attachment storage |
+| `BRIDGE_ALLOW_OUTSIDE_ROOT_CWD` | allow canonical existing paths outside `BRIDGE_WORKDIR` for terminal, Git, workspace browsing, mentions, and local images |
 | `BRIDGE_WS_MAX_FRAME_BYTES` | maximum inbound WebSocket frame size (default 32 MiB) |
 | `BRIDGE_WS_MAX_MESSAGE_BYTES` | maximum reassembled inbound WebSocket message size (default 32 MiB) |
 | `BRIDGE_WS_PER_CLIENT_IN_FLIGHT` | maximum concurrent RPC requests per WebSocket client (default `16`) |
 | `BRIDGE_WS_GLOBAL_IN_FLIGHT` | maximum concurrent client RPC requests bridge-wide (default `128`) |
 
 Resource-limit values are strict positive integers. Requests above concurrency limits receive retryable JSON-RPC error `-32005`; oversized frames/messages are closed by the WebSocket transport before JSON parsing.
+
+Host paths are canonicalized before use. With `BRIDGE_ALLOW_OUTSIDE_ROOT_CWD=false`, absolute paths, relative paths, and symlinks must resolve within `BRIDGE_WORKDIR`. When enabled, existing paths may resolve outside the root for the listed interactive surfaces, but uploaded attachments always remain in root-owned `.clawdex-mobile-attachments` storage and reject symlink escapes.
 
 ### Mobile runtime (`apps/mobile/.env`, generated/updated)
 

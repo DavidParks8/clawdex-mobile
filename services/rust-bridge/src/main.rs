@@ -57,6 +57,7 @@ mod backend_runtime;
 mod config;
 mod health;
 mod live_sync;
+mod path_policy;
 mod preview;
 mod push;
 mod replay;
@@ -69,8 +70,7 @@ use attachments::{
     infer_extension_from_mime, normalize_attachment_kind, sanitize_filename, sanitize_path_segment,
 };
 use attachments::{
-    infer_image_content_type_from_path, resolve_local_image_path, save_uploaded_attachment,
-    AttachmentUploadRequest,
+    infer_image_content_type_from_path, save_uploaded_attachment, AttachmentUploadRequest,
 };
 use backend_runtime::{BackendLifecycleState, BackendRuntimeSnapshot, BackendRuntimeStatus};
 #[cfg(test)]
@@ -85,6 +85,7 @@ use live_sync::{
     discover_recent_rollout_files, hash_rollout_line, resolve_codex_sessions_root,
     rollout_originator_allowed, should_run_rollout_discovery_tick, ROLLOUT_LIVE_SYNC_MAX_FILE_AGE,
 };
+use path_policy::{PathKind, PathPolicy};
 #[cfg(test)]
 use preview::{browser_preview_label_for_port, parse_listening_socket_port};
 use preview::{
@@ -1017,6 +1018,7 @@ impl PushEvent {
 #[derive(Clone)]
 struct AppState {
     config: Arc<BridgeConfig>,
+    path_policy: Arc<PathPolicy>,
     started_at: Instant,
     hub: Arc<ClientHub>,
     backend: Arc<RuntimeBackend>,
@@ -7397,18 +7399,17 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    let path_policy = Arc::new(
+        PathPolicy::new(config.workdir.clone(), config.allow_outside_root_cwd)
+            .expect("validated bridge path policy"),
+    );
 
     let terminal = Arc::new(TerminalService::new(
-        config.workdir.clone(),
+        path_policy.clone(),
         config.terminal_allowed_commands.clone(),
         config.disable_terminal_exec,
-        config.allow_outside_root_cwd,
     ));
-    let git = Arc::new(GitService::new(
-        terminal.clone(),
-        config.workdir.clone(),
-        config.allow_outside_root_cwd,
-    ));
+    let git = Arc::new(GitService::new(terminal.clone(), path_policy.clone()));
     let updater = Arc::new(UpdateService::discover());
     let preview = Arc::new(BrowserPreviewService::new(
         config.port,
@@ -7428,6 +7429,7 @@ async fn main() {
 
     let state = Arc::new(AppState {
         config: config.clone(),
+        path_policy,
         started_at: Instant::now(),
         hub,
         backend,
@@ -7571,35 +7573,21 @@ async fn local_image_handler(
             .into_response();
     }
 
-    let path = match resolve_local_image_path(&query.path) {
+    let path = match resolve_local_image_preview_path(&state.path_policy, &query.path) {
         Ok(path) => path,
-        Err(message) => {
+        Err(error) => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({
                     "error": "invalid_path",
-                    "message": message,
+                    "message": error.message,
                 })),
             )
                 .into_response();
         }
     };
 
-    let canonical = match fs::canonicalize(&path).await {
-        Ok(path) => normalize_path(&path),
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({
-                    "error": "not_found",
-                    "message": "Image file not found"
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    let metadata = match fs::metadata(&canonical).await {
+    let metadata = match fs::metadata(&path).await {
         Ok(metadata) => metadata,
         Err(_) => {
             return (
@@ -7624,7 +7612,7 @@ async fn local_image_handler(
             .into_response();
     }
 
-    let content_type = match infer_image_content_type_from_path(&canonical) {
+    let content_type = match infer_image_content_type_from_path(&path) {
         Some(content_type) => content_type,
         None => {
             return (
@@ -7638,7 +7626,7 @@ async fn local_image_handler(
         }
     };
 
-    let bytes = match fs::read(&canonical).await {
+    let bytes = match fs::read(&path).await {
         Ok(bytes) => bytes,
         Err(error) => {
             return (
@@ -7667,6 +7655,13 @@ async fn local_image_handler(
             )
                 .into_response()
         })
+}
+
+fn resolve_local_image_preview_path(
+    path_policy: &PathPolicy,
+    raw_path: &str,
+) -> Result<PathBuf, BridgeError> {
+    path_policy.resolve_existing(raw_path, PathKind::File)
 }
 
 async fn preview_entry_handler(State(state): State<Arc<AppState>>, request: Request) -> Response {
@@ -8327,6 +8322,14 @@ async fn handle_client_message(
         return;
     }
 
+    let params = match normalize_forwarded_path_params(params, &state.path_policy) {
+        Ok(params) => params,
+        Err(error) => {
+            send_rpc_error(state, client_id, id, error.code, &error.message, error.data).await;
+            return;
+        }
+    };
+
     if let Err(error) = state
         .backend
         .forward_request(client_id, id.clone(), &method, params, permits)
@@ -8567,9 +8570,12 @@ async fn handle_bridge_method(
                 .map_err(|error| BridgeError::server(&error.to_string()))
         }
         "bridge/thread/queue/send" => {
-            let request: BridgeThreadQueueSendRequest =
+            let mut request: BridgeThreadQueueSendRequest =
                 serde_json::from_value(params.unwrap_or_else(|| json!({})))
                     .map_err(|error| BridgeError::invalid_params(&error.to_string()))?;
+            request.turn_start =
+                normalize_forwarded_path_params(Some(request.turn_start), &state.path_policy)?
+                    .ok_or_else(|| BridgeError::invalid_params("turnStart payload is required"))?;
             let result = state
                 .queue
                 .send_message(request)
@@ -8640,7 +8646,7 @@ async fn handle_bridge_method(
             let request: AttachmentUploadRequest =
                 serde_json::from_value(params.unwrap_or_else(|| json!({})))
                     .map_err(|error| BridgeError::invalid_params(&error.to_string()))?;
-            let uploaded = save_uploaded_attachment(request, &state.config.workdir).await?;
+            let uploaded = save_uploaded_attachment(request, &state.path_policy).await?;
             serde_json::to_value(uploaded).map_err(|error| BridgeError::server(&error.to_string()))
         }
         "bridge/git/status" => {
@@ -9276,8 +9282,9 @@ async fn list_workspace_roots(
             continue;
         };
 
-        let Some(canonical_path) =
-            normalize_existing_directory(&state.config.workdir, raw_cwd.as_str()).await
+        let Ok(canonical_path) = state
+            .path_policy
+            .resolve_existing(raw_cwd.as_str(), PathKind::Directory)
         else {
             continue;
         };
@@ -9328,8 +9335,7 @@ async fn list_filesystem_entries(
     let include_hidden = request.include_hidden.unwrap_or(false);
     let directories_only = request.directories_only.unwrap_or(true);
     let include_git_repo = request.include_git_repo.unwrap_or(false);
-    let current_path =
-        resolve_browsable_directory(&state.config.workdir, request.path.as_deref()).await?;
+    let current_path = state.path_policy.resolve_cwd(request.path.as_deref())?;
 
     let mut read_dir = fs::read_dir(&current_path)
         .await
@@ -9351,7 +9357,16 @@ async fn list_filesystem_entries(
             continue;
         }
 
-        let entry_path = normalize_path(&entry.path());
+        let entry_kind = if directories_only {
+            PathKind::Directory
+        } else {
+            PathKind::Any
+        };
+        let entry_path =
+            match resolve_filesystem_entry(&state.path_policy, &entry.path(), entry_kind) {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
         let file_type = match entry.file_type().await {
             Ok(file_type) => file_type,
             Err(_) => continue,
@@ -9397,7 +9412,11 @@ async fn list_filesystem_entries(
         })
     });
 
-    let parent_path = current_path.parent().map(path_to_string);
+    let parent_path = state
+        .path_policy
+        .parent_for_browsing(&current_path)
+        .as_deref()
+        .map(path_to_string);
 
     Ok(FileSystemListResponse {
         bridge_root: path_to_string(&state.config.workdir),
@@ -9405,6 +9424,14 @@ async fn list_filesystem_entries(
         parent_path,
         entries,
     })
+}
+
+fn resolve_filesystem_entry(
+    path_policy: &PathPolicy,
+    path: &Path,
+    kind: PathKind,
+) -> Result<PathBuf, BridgeError> {
+    path_policy.resolve_existing(path.to_string_lossy().as_ref(), kind)
 }
 
 fn bridge_chatgpt_auth_cache() -> &'static StdRwLock<Option<BridgeChatGptAuthBundle>> {
@@ -9586,67 +9613,6 @@ async fn send_overload_error(
 
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
-}
-
-async fn normalize_existing_directory(base: &Path, raw_path: &str) -> Option<PathBuf> {
-    let trimmed = raw_path.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let candidate = PathBuf::from(trimmed);
-    let resolved = if candidate.is_absolute() {
-        candidate
-    } else {
-        base.join(candidate)
-    };
-
-    let canonical = fs::canonicalize(&resolved).await.ok()?;
-    let metadata = fs::metadata(&canonical).await.ok()?;
-    if !metadata.is_dir() {
-        return None;
-    }
-
-    Some(normalize_path(&canonical))
-}
-
-async fn resolve_browsable_directory(
-    base: &Path,
-    raw_path: Option<&str>,
-) -> Result<PathBuf, BridgeError> {
-    let trimmed = raw_path.map(str::trim).unwrap_or("");
-    let candidate = if trimmed.is_empty() {
-        base.to_path_buf()
-    } else {
-        let requested = PathBuf::from(trimmed);
-        if requested.is_absolute() {
-            requested
-        } else {
-            base.join(requested)
-        }
-    };
-
-    let canonical = fs::canonicalize(&candidate).await.map_err(|error| {
-        BridgeError::invalid_params(&format!(
-            "workspace directory is invalid or inaccessible ({}): {error}",
-            candidate.to_string_lossy()
-        ))
-    })?;
-
-    let metadata = fs::metadata(&canonical).await.map_err(|error| {
-        BridgeError::server(&format!(
-            "failed to inspect workspace directory ({}): {error}",
-            canonical.to_string_lossy()
-        ))
-    })?;
-
-    if !metadata.is_dir() {
-        return Err(BridgeError::invalid_params(
-            "workspace directory must point to a folder",
-        ));
-    }
-
-    Ok(normalize_path(&canonical))
 }
 
 fn is_unspecified_bind_host(host: &str) -> bool {
@@ -11516,6 +11482,71 @@ fn normalize_forwarded_ids(value: Value) -> Value {
 
 fn normalize_forwarded_params(value: Value) -> Value {
     strip_bridge_routing_fields(normalize_forwarded_ids(value))
+}
+
+fn normalize_forwarded_path_params(
+    params: Option<Value>,
+    path_policy: &PathPolicy,
+) -> Result<Option<Value>, BridgeError> {
+    params
+        .map(|value| normalize_forwarded_value_paths(value, path_policy, path_policy.root()))
+        .transpose()
+}
+
+fn normalize_forwarded_value_paths(
+    value: Value,
+    path_policy: &PathPolicy,
+    inherited_base: &Path,
+) -> Result<Value, BridgeError> {
+    match value {
+        Value::Object(mut object) => {
+            let base = match object.get("cwd").and_then(Value::as_str) {
+                Some(raw) if !raw.trim().is_empty() => {
+                    let cwd = path_policy.resolve_existing_from(
+                        inherited_base,
+                        raw,
+                        PathKind::Directory,
+                    )?;
+                    object.insert("cwd".to_string(), Value::String(path_to_string(&cwd)));
+                    cwd
+                }
+                _ => inherited_base.to_path_buf(),
+            };
+
+            let input_kind =
+                object
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .and_then(|kind| match kind {
+                        "mention" => Some(PathKind::Any),
+                        "localImage" => Some(PathKind::File),
+                        _ => None,
+                    });
+            if let Some(kind) = input_kind {
+                let raw_path = object
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| BridgeError::invalid_params("input path is required"))?;
+                let path = path_policy.resolve_existing_from(&base, raw_path, kind)?;
+                object.insert("path".to_string(), Value::String(path_to_string(&path)));
+            }
+
+            let normalized = object
+                .into_iter()
+                .map(|(key, child)| {
+                    normalize_forwarded_value_paths(child, path_policy, &base)
+                        .map(|child| (key, child))
+                })
+                .collect::<Result<serde_json::Map<String, Value>, BridgeError>>()?;
+            Ok(Value::Object(normalized))
+        }
+        Value::Array(values) => values
+            .into_iter()
+            .map(|item| normalize_forwarded_value_paths(item, path_policy, inherited_base))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        other => Ok(other),
+    }
 }
 
 fn normalize_forwarded_ids_for_key(key: Option<&str>, value: Value) -> Value {
@@ -14214,17 +14245,16 @@ mod tests {
         let hub = Arc::new(ClientHub::new());
         let backend =
             build_test_runtime_backend(hub.clone(), BridgeRuntimeEngine::Codex, true).await;
+        let path_policy = Arc::new(
+            PathPolicy::new(config.workdir.clone(), config.allow_outside_root_cwd)
+                .expect("create test path policy"),
+        );
         let terminal = Arc::new(TerminalService::new(
-            config.workdir.clone(),
+            path_policy.clone(),
             config.terminal_allowed_commands.clone(),
             config.disable_terminal_exec,
-            config.allow_outside_root_cwd,
         ));
-        let git = Arc::new(GitService::new(
-            terminal.clone(),
-            config.workdir.clone(),
-            config.allow_outside_root_cwd,
-        ));
+        let git = Arc::new(GitService::new(terminal.clone(), path_policy.clone()));
         let updater = Arc::new(UpdateService::discover());
         let preview = Arc::new(BrowserPreviewService::new(
             config.port,
@@ -14237,6 +14267,7 @@ mod tests {
         Arc::new(AppState {
             ws_global_in_flight: Arc::new(Semaphore::new(config.ws_limits.global_in_flight)),
             config,
+            path_policy,
             started_at: Instant::now(),
             hub,
             backend,
@@ -14983,6 +15014,133 @@ mod tests {
                 "includeHidden": false
             })
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn forwarded_paths_canonicalize_and_reject_symlink_escapes() {
+        use std::os::unix::fs::symlink;
+
+        let temp = env::temp_dir().join(format!("clawdex-forwarded-paths-{}", Uuid::new_v4()));
+        let root = temp.join("root");
+        let workspace = root.join("workspace");
+        let outside = temp.join("outside");
+        std::fs::create_dir_all(&workspace).expect("create workspace");
+        std::fs::create_dir_all(&outside).expect("create outside");
+        std::fs::write(workspace.join("README.md"), b"readme").expect("write mention");
+        std::fs::write(workspace.join("image.png"), b"png").expect("write image");
+        std::fs::write(outside.join("secret.txt"), b"secret").expect("write outside file");
+        symlink(&outside, workspace.join("escape")).expect("create escape symlink");
+        let policy = PathPolicy::new(root.clone(), false).expect("create policy");
+
+        let normalized = normalize_forwarded_path_params(
+            Some(json!({
+                "cwd": "workspace/.",
+                "input": [
+                    { "type": "mention", "path": "README.md", "name": "README.md" },
+                    { "type": "localImage", "path": "image.png" }
+                ]
+            })),
+            &policy,
+        )
+        .expect("normalize forwarded paths")
+        .expect("params");
+        let canonical_workspace = std::fs::canonicalize(&workspace).expect("canonical workspace");
+        assert_eq!(
+            normalized["cwd"],
+            json!(path_to_string(&canonical_workspace))
+        );
+        assert_eq!(
+            normalized["input"][0]["path"],
+            json!(path_to_string(&canonical_workspace.join("README.md")))
+        );
+        assert_eq!(
+            normalized["input"][1]["path"],
+            json!(path_to_string(&canonical_workspace.join("image.png")))
+        );
+
+        let error = normalize_forwarded_path_params(
+            Some(json!({
+                "cwd": "workspace",
+                "input": [{ "type": "mention", "path": "escape/secret.txt" }]
+            })),
+            &policy,
+        )
+        .expect_err("reject forwarded symlink escape");
+        assert_eq!(error.code, -32602);
+        let image_error = normalize_forwarded_path_params(
+            Some(json!({
+                "cwd": "workspace",
+                "input": [{ "type": "localImage", "path": "escape/secret.txt" }]
+            })),
+            &policy,
+        )
+        .expect_err("reject local image symlink escape");
+        assert_eq!(image_error.code, -32602);
+
+        let outside_policy = PathPolicy::new(root, true).expect("create outside policy");
+        let allowed = normalize_forwarded_path_params(
+            Some(json!({
+                "cwd": workspace,
+                "input": [{ "type": "mention", "path": "escape/secret.txt" }]
+            })),
+            &outside_policy,
+        )
+        .expect("allow configured outside path")
+        .expect("params");
+        assert_eq!(
+            allowed["input"][0]["path"],
+            json!(path_to_string(
+                &std::fs::canonicalize(outside.join("secret.txt")).expect("canonical outside file")
+            ))
+        );
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filesystem_entry_policy_hides_symlink_escapes() {
+        use std::os::unix::fs::symlink;
+
+        let temp = env::temp_dir().join(format!("clawdex-fs-paths-{}", Uuid::new_v4()));
+        let root = temp.join("root");
+        let outside = temp.join("outside");
+        std::fs::create_dir_all(&root).expect("create root");
+        std::fs::create_dir_all(&outside).expect("create outside");
+        symlink(&outside, root.join("escape")).expect("create escape symlink");
+
+        let confined = PathPolicy::new(root.clone(), false).expect("create confined policy");
+        assert!(
+            resolve_filesystem_entry(&confined, &root.join("escape"), PathKind::Directory).is_err()
+        );
+
+        let permissive = PathPolicy::new(root, true).expect("create permissive policy");
+        assert_eq!(
+            resolve_filesystem_entry(&permissive, &temp.join("root/escape"), PathKind::Directory)
+                .expect("allow outside filesystem entry"),
+            std::fs::canonicalize(outside).expect("canonical outside")
+        );
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_image_preview_policy_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let temp = env::temp_dir().join(format!("clawdex-image-path-{}", Uuid::new_v4()));
+        let root = temp.join("root");
+        let outside = temp.join("outside");
+        std::fs::create_dir_all(&root).expect("create root");
+        std::fs::create_dir_all(&outside).expect("create outside");
+        std::fs::write(outside.join("image.png"), b"png").expect("write image");
+        symlink(&outside, root.join("escape")).expect("create escape symlink");
+
+        let policy = PathPolicy::new(root, false).expect("create policy");
+        let error = resolve_local_image_preview_path(&policy, "escape/image.png")
+            .expect_err("reject preview symlink escape");
+        assert_eq!(error.code, -32602);
+        let _ = std::fs::remove_dir_all(temp);
     }
 
     #[test]
@@ -16623,18 +16781,6 @@ mod tests {
         assert_eq!(
             normalize_path(Path::new("a/b/../c/./d")),
             PathBuf::from("a/c/d")
-        );
-    }
-
-    #[test]
-    fn resolve_local_image_path_requires_absolute_paths() {
-        assert_eq!(
-            resolve_local_image_path("/tmp/../tmp/example.png").unwrap(),
-            PathBuf::from("/tmp/example.png")
-        );
-        assert_eq!(
-            resolve_local_image_path("relative/example.png").unwrap_err(),
-            "Image path must be absolute"
         );
     }
 

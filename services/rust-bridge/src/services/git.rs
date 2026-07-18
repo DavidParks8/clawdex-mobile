@@ -5,10 +5,10 @@ use std::{
 };
 
 use crate::{
-    normalize_path, BridgeError, GitBranchSummary, GitBranchesResponse, GitCloneResponse,
-    GitCommitResponse, GitDiffResponse, GitHistoryCommit, GitHistoryResponse, GitPushResponse,
-    GitStageAllResponse, GitStageResponse, GitStatusEntry, GitStatusResponse, GitSwitchResponse,
-    GitUnstageAllResponse, GitUnstageResponse,
+    normalize_path, path_policy::PathPolicy, BridgeError, GitBranchSummary, GitBranchesResponse,
+    GitCloneResponse, GitCommitResponse, GitDiffResponse, GitHistoryCommit, GitHistoryResponse,
+    GitPushResponse, GitStageAllResponse, GitStageResponse, GitStatusEntry, GitStatusResponse,
+    GitSwitchResponse, GitUnstageAllResponse, GitUnstageResponse,
 };
 
 use super::TerminalService;
@@ -16,25 +16,19 @@ use super::TerminalService;
 #[derive(Clone)]
 pub(crate) struct GitService {
     terminal: Arc<TerminalService>,
-    root: PathBuf,
-    allow_outside_root: bool,
+    path_policy: Arc<PathPolicy>,
 }
 
 impl GitService {
-    pub(crate) fn new(
-        terminal: Arc<TerminalService>,
-        root: PathBuf,
-        allow_outside_root: bool,
-    ) -> Self {
+    pub(crate) fn new(terminal: Arc<TerminalService>, path_policy: Arc<PathPolicy>) -> Self {
         Self {
             terminal,
-            root,
-            allow_outside_root,
+            path_policy,
         }
     }
 
     fn resolve_repo_path(&self, raw_cwd: Option<&str>) -> Result<PathBuf, BridgeError> {
-        resolve_git_cwd(raw_cwd, &self.root, self.allow_outside_root)
+        self.path_policy.resolve_cwd(raw_cwd)
     }
 
     pub(crate) async fn get_status(
@@ -882,34 +876,6 @@ fn select_default_remote_name(raw: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn resolve_git_cwd(
-    raw_cwd: Option<&str>,
-    root: &PathBuf,
-    allow_outside_root: bool,
-) -> Result<PathBuf, BridgeError> {
-    let normalized_root = normalize_path(root);
-    let requested = match raw_cwd {
-        Some(raw) if !raw.trim().is_empty() => {
-            let path = PathBuf::from(raw);
-            if path.is_absolute() {
-                path
-            } else {
-                root.join(path)
-            }
-        }
-        _ => root.to_path_buf(),
-    };
-
-    let normalized = normalize_path(&requested);
-    if !allow_outside_root && !normalized.starts_with(&normalized_root) {
-        return Err(BridgeError::invalid_params(
-            "cwd must stay within BRIDGE_WORKDIR",
-        ));
-    }
-
-    Ok(normalized)
-}
-
 fn resolve_repo_relative_path(raw_path: &str, repo_path: &Path) -> Result<String, BridgeError> {
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
@@ -981,49 +947,37 @@ mod tests {
     use super::{
         normalize_git_branch_target, parse_git_branches, parse_git_history,
         parse_porcelain_status_entries, parse_status_has_upstream, resolve_clone_directory_name,
-        resolve_git_cwd, resolve_repo_relative_path, resolve_switch_target,
-        select_default_remote_name, GitSwitchTarget,
+        resolve_repo_relative_path, resolve_switch_target, select_default_remote_name,
+        GitSwitchTarget,
     };
-    use crate::GitBranchSummary;
-    use std::path::{Path, PathBuf};
+    use crate::{path_policy::PathPolicy, GitBranchSummary};
+    use std::{collections::HashSet, fs, path::Path, sync::Arc};
+    use uuid::Uuid;
 
+    #[cfg(unix)]
     #[test]
-    fn resolves_relative_cwd_against_root() {
-        let root = PathBuf::from("/bridge/root");
-        let resolved =
-            resolve_git_cwd(Some("workspace/repo"), &root, false).expect("resolve relative cwd");
-        assert_eq!(resolved, PathBuf::from("/bridge/root/workspace/repo"));
-    }
+    fn git_cwd_policy_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
 
-    #[test]
-    fn rejects_absolute_cwd_outside_root_by_default() {
-        let root = PathBuf::from("/bridge/root");
-        let error = resolve_git_cwd(Some("/external/repo"), &root, false)
-            .expect_err("reject outside-root cwd");
+        let temp = std::env::temp_dir().join(format!("clawdex-git-path-{}", Uuid::new_v4()));
+        let root = temp.join("root");
+        let outside = temp.join("outside");
+        fs::create_dir_all(&root).expect("create root");
+        fs::create_dir_all(&outside).expect("create outside");
+        symlink(&outside, root.join("escape")).expect("create escape symlink");
+        let policy = Arc::new(PathPolicy::new(root, false).expect("create policy"));
+        let terminal = Arc::new(super::TerminalService::new(
+            policy.clone(),
+            HashSet::new(),
+            true,
+        ));
+        let git = super::GitService::new(terminal, policy);
+
+        let error = git
+            .resolve_repo_path(Some("escape"))
+            .expect_err("reject git symlink escape");
         assert_eq!(error.code, -32602);
-    }
-
-    #[test]
-    fn rejects_relative_cwd_that_escapes_root() {
-        let root = PathBuf::from("/bridge/root");
-        let error =
-            resolve_git_cwd(Some("../outside"), &root, false).expect_err("reject escaped cwd");
-        assert_eq!(error.code, -32602);
-    }
-
-    #[test]
-    fn allows_absolute_cwd_outside_root_when_enabled() {
-        let root = PathBuf::from("/bridge/root");
-        let resolved =
-            resolve_git_cwd(Some("/external/repo"), &root, true).expect("allow outside root");
-        assert_eq!(resolved, PathBuf::from("/external/repo"));
-    }
-
-    #[test]
-    fn falls_back_to_root_when_cwd_missing() {
-        let root = PathBuf::from("/bridge/root");
-        let resolved = resolve_git_cwd(None, &root, false).expect("fallback to root");
-        assert_eq!(resolved, root);
+        let _ = fs::remove_dir_all(temp);
     }
 
     #[test]

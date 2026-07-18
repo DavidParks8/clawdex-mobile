@@ -5,7 +5,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use crate::{decode_engine_qualified_id, normalize_path, BridgeError};
+use crate::{decode_engine_qualified_id, path_policy::PathPolicy, BridgeError};
 
 const MOBILE_ATTACHMENTS_DIR: &str = ".clawdex-mobile-attachments";
 const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
@@ -32,7 +32,7 @@ pub(crate) struct AttachmentUploadResponse {
 
 pub(crate) async fn save_uploaded_attachment(
     request: AttachmentUploadRequest,
-    workdir: &Path,
+    path_policy: &PathPolicy,
 ) -> Result<AttachmentUploadResponse, BridgeError> {
     let encoded = request.data_base64.trim();
     if encoded.is_empty() {
@@ -65,34 +65,26 @@ pub(crate) async fn save_uploaded_attachment(
         normalized_kind,
     );
 
-    let mut attachment_dir = workdir.join(MOBILE_ATTACHMENTS_DIR);
+    let mut attachment_relative = PathBuf::from(MOBILE_ATTACHMENTS_DIR);
     if let Some(thread_id) = request.thread_id.as_deref() {
         let normalized_thread = sanitize_path_segment(&decode_engine_qualified_id(thread_id));
         if !normalized_thread.is_empty() {
-            attachment_dir = attachment_dir.join(normalized_thread);
+            attachment_relative = attachment_relative.join(normalized_thread);
         }
     }
 
-    fs::create_dir_all(&attachment_dir).await.map_err(|error| {
-        BridgeError::server(&format!("failed to create attachment directory: {error}"))
-    })?;
+    let attachment_dir = path_policy.resolve_root_owned_directory(&attachment_relative)?;
 
     let timestamp = Utc::now().format("%Y%m%d-%H%M%S-%3f").to_string();
     let unique_name = format!("{timestamp}-{}-{file_name}", std::process::id());
     let target_path = attachment_dir.join(unique_name);
-    let normalized_target = normalize_path(&target_path);
-    if !normalized_target.starts_with(workdir) {
-        return Err(BridgeError::invalid_params(
-            "attachment path must stay within BRIDGE_WORKDIR",
-        ));
-    }
 
-    fs::write(&normalized_target, &bytes)
+    fs::write(&target_path, &bytes)
         .await
         .map_err(|error| BridgeError::server(&format!("failed to persist attachment: {error}")))?;
 
     Ok(AttachmentUploadResponse {
-        path: normalized_target.to_string_lossy().to_string(),
+        path: target_path.to_string_lossy().to_string(),
         file_name,
         mime_type: request
             .mime_type
@@ -250,18 +242,6 @@ pub(crate) fn infer_extension_from_mime(raw_mime_type: Option<&str>) -> Option<&
     }
 }
 
-pub(crate) fn resolve_local_image_path(raw_path: &str) -> Result<PathBuf, &'static str> {
-    let trimmed = raw_path.trim();
-    if trimmed.is_empty() {
-        return Err("Image path is required");
-    }
-    let path = PathBuf::from(trimmed);
-    if !path.is_absolute() {
-        return Err("Image path must be absolute");
-    }
-    Ok(normalize_path(&path))
-}
-
 pub(crate) fn infer_image_content_type_from_path(path: &Path) -> Option<&'static str> {
     let extension = path.extension()?.to_str()?.trim().to_ascii_lowercase();
     match extension.as_str() {
@@ -272,5 +252,81 @@ pub(crate) fn infer_image_content_type_from_path(path: &Path) -> Option<&'static
         "heic" => Some("image/heic"),
         "heif" => Some("image/heif"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{save_uploaded_attachment, AttachmentUploadRequest, MOBILE_ATTACHMENTS_DIR};
+    use crate::path_policy::PathPolicy;
+    use base64::{engine::general_purpose, Engine as _};
+    use std::{fs, path::PathBuf};
+    use uuid::Uuid;
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("clawdex-attachments-{}", Uuid::new_v4()));
+            fs::create_dir(&path).expect("create test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn upload_request() -> AttachmentUploadRequest {
+        AttachmentUploadRequest {
+            data_base64: general_purpose::STANDARD.encode(b"attachment contents"),
+            file_name: Some("note.txt".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            thread_id: Some("codex:thread/one".to_string()),
+            kind: Some("file".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_stays_in_canonical_root_owned_storage() {
+        let temp = TestDir::new();
+        let root = temp.0.join("root");
+        fs::create_dir(&root).expect("create root");
+        let policy = PathPolicy::new(root.clone(), true).expect("create policy");
+
+        let uploaded = save_uploaded_attachment(upload_request(), &policy)
+            .await
+            .expect("save attachment");
+        let canonical = fs::canonicalize(uploaded.path).expect("canonical uploaded path");
+        assert!(canonical.starts_with(fs::canonicalize(root).expect("canonical root")));
+        assert_eq!(
+            fs::read(canonical).expect("read attachment"),
+            b"attachment contents"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn upload_rejects_attachment_directory_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TestDir::new();
+        let root = temp.0.join("root");
+        let outside = temp.0.join("outside");
+        fs::create_dir(&root).expect("create root");
+        fs::create_dir(&outside).expect("create outside");
+        symlink(&outside, root.join(MOBILE_ATTACHMENTS_DIR)).expect("create attachment symlink");
+        let policy = PathPolicy::new(root, true).expect("create policy");
+
+        let error = save_uploaded_attachment(upload_request(), &policy)
+            .await
+            .expect_err("reject attachment symlink escape");
+        assert_eq!(error.code, -32602);
+        assert!(fs::read_dir(outside)
+            .expect("read outside")
+            .next()
+            .is_none());
     }
 }

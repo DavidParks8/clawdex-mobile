@@ -4,7 +4,11 @@ import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(readFileSync(path.join(root, 'contracts/bridge-rpc/v1/manifest.json'), 'utf8'));
-const rust = readFileSync(path.join(root, 'services/rust-bridge/src/main.rs'), 'utf8');
+const rust = [
+  'services/rust-bridge/src/main.rs',
+  'services/rust-bridge/src/rpc.rs',
+  'services/rust-bridge/src/config.rs',
+].map((file) => readFileSync(path.join(root, file), 'utf8')).join('\n');
 const client = readFileSync(path.join(root, 'apps/mobile/src/api/client.ts'), 'utf8');
 const ws = readFileSync(path.join(root, 'apps/mobile/src/api/ws.ts'), 'utf8');
 const mobileSource = `${client}\n${ws}`;

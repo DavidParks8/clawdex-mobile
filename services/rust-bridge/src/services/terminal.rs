@@ -14,8 +14,9 @@ use tokio::{
 };
 
 use crate::{
-    contains_disallowed_control_chars, normalize_path, BridgeError, TerminalExecRequest,
-    TerminalExecResponse,
+    contains_disallowed_control_chars,
+    path_policy::{PathKind, PathPolicy},
+    BridgeError, TerminalExecRequest, TerminalExecResponse,
 };
 
 const DEFAULT_TERMINAL_MAX_CONCURRENT: usize = 4;
@@ -24,25 +25,22 @@ const OUTPUT_READ_CHUNK_SIZE: usize = 8 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct TerminalService {
-    root: PathBuf,
+    path_policy: Arc<PathPolicy>,
     allowed_commands: HashSet<String>,
     disabled: bool,
-    allow_outside_root: bool,
     concurrency_limiter: Arc<Semaphore>,
 }
 
 impl TerminalService {
     pub(crate) fn new(
-        root: PathBuf,
+        path_policy: Arc<PathPolicy>,
         allowed_commands: HashSet<String>,
         disabled: bool,
-        allow_outside_root: bool,
     ) -> Self {
         Self {
-            root,
+            path_policy,
             allowed_commands,
             disabled,
-            allow_outside_root,
             concurrency_limiter: Arc::new(Semaphore::new(DEFAULT_TERMINAL_MAX_CONCURRENT)),
         }
     }
@@ -86,7 +84,7 @@ impl TerminalService {
         }
 
         let args = tokens[1..].to_vec();
-        let cwd = resolve_exec_cwd(request.cwd.as_deref(), &self.root, self.allow_outside_root)?;
+        let cwd = self.path_policy.resolve_cwd(request.cwd.as_deref())?;
 
         self.execute_binary_internal(
             binary.as_str(),
@@ -105,15 +103,9 @@ impl TerminalService {
         cwd: PathBuf,
         timeout_ms: Option<u64>,
     ) -> Result<TerminalExecResponse, BridgeError> {
-        let cwd = normalize_path(&cwd);
-        if !self.allow_outside_root {
-            let normalized_root = normalize_path(&self.root);
-            if !cwd.starts_with(&normalized_root) {
-                return Err(BridgeError::invalid_params(
-                    "cwd must stay within BRIDGE_WORKDIR",
-                ));
-            }
-        }
+        let cwd = self
+            .path_policy
+            .resolve_existing(cwd.to_string_lossy().as_ref(), PathKind::Directory)?;
 
         let display = std::iter::once(binary.to_string())
             .chain(args.iter().cloned())
@@ -210,34 +202,6 @@ impl TerminalService {
     }
 }
 
-fn resolve_exec_cwd(
-    raw_cwd: Option<&str>,
-    root: &PathBuf,
-    allow_outside_root: bool,
-) -> Result<PathBuf, BridgeError> {
-    let normalized_root = normalize_path(root);
-    let requested = match raw_cwd {
-        Some(raw) if !raw.trim().is_empty() => {
-            let path = PathBuf::from(raw);
-            if path.is_absolute() {
-                path
-            } else {
-                root.join(path)
-            }
-        }
-        _ => root.to_path_buf(),
-    };
-
-    let normalized = normalize_path(&requested);
-    if !allow_outside_root && !normalized.starts_with(&normalized_root) {
-        return Err(BridgeError::invalid_params(
-            "cwd must stay within BRIDGE_WORKDIR",
-        ));
-    }
-
-    Ok(normalized)
-}
-
 async fn read_stream_limited<R>(mut reader: R, max_bytes: usize) -> (Vec<u8>, bool)
 where
     R: AsyncRead + Unpin,
@@ -281,39 +245,50 @@ fn finalize_output(bytes: Vec<u8>, truncated: bool) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{finalize_output, resolve_exec_cwd};
-    use std::path::PathBuf;
+    use super::{finalize_output, TerminalService};
+    use crate::{path_policy::PathPolicy, TerminalExecRequest};
+    use std::{collections::HashSet, fs, path::PathBuf, sync::Arc};
+    use uuid::Uuid;
 
-    #[test]
-    fn resolves_relative_exec_cwd_against_root() {
-        let root = PathBuf::from("/bridge/root");
-        let resolved =
-            resolve_exec_cwd(Some("workspace/repo"), &root, false).expect("resolve relative cwd");
-        assert_eq!(resolved, PathBuf::from("/bridge/root/workspace/repo"));
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("clawdex-terminal-{}", Uuid::new_v4()));
+            fs::create_dir(&path).expect("create test directory");
+            Self(path)
+        }
     }
 
-    #[test]
-    fn rejects_absolute_exec_cwd_outside_root_by_default() {
-        let root = PathBuf::from("/bridge/root");
-        let error = resolve_exec_cwd(Some("/external/repo"), &root, false)
-            .expect_err("reject outside-root cwd");
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminal_rejects_symlink_cwd_escape_before_execution() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TestDir::new();
+        let root = temp.0.join("root");
+        let outside = temp.0.join("outside");
+        fs::create_dir(&root).expect("create root");
+        fs::create_dir(&outside).expect("create outside");
+        symlink(&outside, root.join("escape")).expect("create escape symlink");
+        let policy = Arc::new(PathPolicy::new(root, false).expect("create policy"));
+        let service = TerminalService::new(policy, HashSet::from(["pwd".to_string()]), false);
+
+        let error = service
+            .execute_shell(TerminalExecRequest {
+                command: "pwd".to_string(),
+                cwd: Some("escape".to_string()),
+                timeout_ms: None,
+            })
+            .await
+            .expect_err("reject terminal symlink escape");
         assert_eq!(error.code, -32602);
-    }
-
-    #[test]
-    fn rejects_relative_exec_cwd_that_escapes_root() {
-        let root = PathBuf::from("/bridge/root");
-        let error =
-            resolve_exec_cwd(Some("../outside"), &root, false).expect_err("reject escape path");
-        assert_eq!(error.code, -32602);
-    }
-
-    #[test]
-    fn allows_absolute_exec_cwd_outside_root_when_enabled() {
-        let root = PathBuf::from("/bridge/root");
-        let resolved =
-            resolve_exec_cwd(Some("/external/repo"), &root, true).expect("allow outside root");
-        assert_eq!(resolved, PathBuf::from("/external/repo"));
     }
 
     #[test]
