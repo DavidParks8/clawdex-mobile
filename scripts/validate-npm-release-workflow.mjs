@@ -26,6 +26,11 @@ assert(publish?.concurrency?.['cancel-in-progress'] === false, 'an active packag
 assert(publish?.concurrency?.group?.includes('outputs.package_name'), 'publish concurrency must include the package name');
 assert(publish?.concurrency?.group?.includes('outputs.package_version'), 'publish concurrency must include the package version');
 
+const publishNodeStep = publish?.steps?.find((step) => step.name === 'Setup Node.js');
+assert(publishNodeStep?.with?.['node-version'] === '22.22.2', 'publish Node.js must be pinned to the trusted-publishing runtime');
+const publishNpmStep = publish?.steps?.find((step) => step.name === 'Install npm for trusted publishing');
+assert(publishNpmStep?.run === 'npm install -g npm@11.18.0', 'publish npm must be pinned to a compatible trusted-publishing release');
+
 const jobsContainingPublish = Object.entries(workflow.jobs ?? {})
   .filter(([, job]) => JSON.stringify(job).includes('npm publish'))
   .map(([name]) => name);

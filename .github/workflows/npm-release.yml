@@ -269,7 +269,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: "22.13.1"
+          node-version: "22.22.2"
           # No registry-url: it makes setup-node write an .npmrc with
           # _authToken=${NODE_AUTH_TOKEN}, forcing (empty) token auth and
           # breaking OIDC trusted publishing (npm returns 404 on PUT).
@@ -277,8 +277,8 @@ jobs:
           cache-dependency-path: package-lock.json
           package-manager-cache: false
 
-      - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@latest # trusted publishing (OIDC) requires npm >= 11.5.1
+      - name: Install npm for trusted publishing
+        run: npm install -g npm@11.18.0
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
