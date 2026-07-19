@@ -63,9 +63,8 @@ assert(
 
 const publishTargetStep = publish?.steps?.find((step) => step.name === 'Resolve publish target');
 assert(
-  publishTargetStep?.run?.includes("require('semver').validRange(process.argv[1])")
-    && publishTargetStep.run.includes('PUBLISH_TAG="next"'),
-  'SemVer-like prereleases must use a valid fallback npm dist-tag'
+  publishTargetStep?.run?.startsWith('node scripts/resolve-npm-publish-target.mjs\n'),
+  'publish target resolution must use the tested JavaScript policy'
 );
 
 process.stdout.write('NPM release workflow is valid and single-owner.\n');

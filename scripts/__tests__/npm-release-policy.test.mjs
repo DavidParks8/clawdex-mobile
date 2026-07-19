@@ -6,6 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { resolveNpmRelease } from '../resolve-npm-release.mjs';
+import { resolveNpmPublishTarget } from '../resolve-npm-publish-target.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -86,6 +87,45 @@ test('manual publishing requires the explicit publish request', () => {
         manualPublish: 'true',
       }),
       /only allowed from refs\/heads\/main/
+    );
+  }
+});
+
+test('npm publish targets reserve latest for stable versions', () => {
+  const cases = [
+    { version: '6.0.0', requestedTag: '', publishTag: 'latest', isPrerelease: false },
+    { version: '6.0.0', requestedTag: 'beta', publishTag: 'beta', isPrerelease: false },
+    { version: '6.0.0-beta.1', requestedTag: '', publishTag: 'beta', isPrerelease: true },
+    { version: '6.0.0-0', requestedTag: 'auto', publishTag: 'next', isPrerelease: true },
+    { version: '6.0.0-v1.0', requestedTag: '', publishTag: 'next', isPrerelease: true },
+    { version: '6.0.0-beta.1', requestedTag: 'preview', publishTag: 'preview', isPrerelease: true },
+  ];
+  for (const expected of cases) {
+    const target = resolveNpmPublishTarget({
+      packageName: packageIdentity.packageName,
+      packageVersion: expected.version,
+      requestedTag: expected.requestedTag,
+    });
+    assert.equal(target.publishTag, expected.publishTag, expected.version);
+    assert.equal(target.isPrerelease, expected.isPrerelease, expected.version);
+  }
+
+  assert.throws(
+    () => resolveNpmPublishTarget({
+      packageName: packageIdentity.packageName,
+      packageVersion: '6.0.0-beta.1',
+      requestedTag: 'latest',
+    }),
+    /cannot use the npm latest/
+  );
+  for (const requestedTag of ['0', 'v1', '$(unsafe)', 'bad tag']) {
+    assert.throws(
+      () => resolveNpmPublishTarget({
+        packageName: packageIdentity.packageName,
+        packageVersion: '6.0.0',
+        requestedTag,
+      }),
+      /npm dist-tag|Invalid npm dist-tag/
     );
   }
 });
