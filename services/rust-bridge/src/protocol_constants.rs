@@ -32,6 +32,7 @@ pub(super) const ROLLOUT_LIVE_SYNC_DEDUP_CAPACITY: usize = 8_192;
 pub(super) const OPENCODE_HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
 pub(super) const OPENCODE_HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(250);
 pub(super) const OPENCODE_EVENT_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+pub(super) const OPENCODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 pub(super) const BROWSER_PREVIEW_COOKIE_NAME: &str = "clawdex_preview";
 pub(super) const BROWSER_PREVIEW_VIEWPORT_COOKIE_NAME: &str = "clawdex_preview_vp";
 pub(super) const BROWSER_PREVIEW_PROXY_PREFIX: &str = "/__clawdex_proxy__";

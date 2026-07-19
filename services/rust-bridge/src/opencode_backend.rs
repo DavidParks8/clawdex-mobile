@@ -218,8 +218,16 @@ impl OpencodeBackend {
         let mut last_error = "opencode health probe did not run".to_string();
         let deadline = Instant::now() + OPENCODE_HEALTH_TIMEOUT;
         while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
             match self
-                .request_json(HttpMethod::GET, "global/health", None, None, None)
+                .request_json_with_timeout(
+                    HttpMethod::GET,
+                    "global/health",
+                    None,
+                    None,
+                    None,
+                    remaining.min(OPENCODE_REQUEST_TIMEOUT),
+                )
                 .await
             {
                 Ok(health) if health.get("healthy").and_then(Value::as_bool) == Some(true) => {
@@ -233,7 +241,11 @@ impl OpencodeBackend {
                 }
             }
 
-            tokio::time::sleep(OPENCODE_HEALTH_POLL_INTERVAL).await;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            tokio::time::sleep(remaining.min(OPENCODE_HEALTH_POLL_INTERVAL)).await;
         }
 
         Err(format!("opencode failed health check: {last_error}"))
@@ -1732,6 +1744,26 @@ impl OpencodeBackend {
         query: Option<Vec<(&str, String)>>,
         body: Option<Value>,
     ) -> Result<Value, String> {
+        self.request_json_with_timeout(
+            method,
+            path,
+            directory,
+            query,
+            body,
+            OPENCODE_REQUEST_TIMEOUT,
+        )
+        .await
+    }
+
+    pub(super) async fn request_json_with_timeout(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        directory: Option<&str>,
+        query: Option<Vec<(&str, String)>>,
+        body: Option<Value>,
+        request_timeout: Duration,
+    ) -> Result<Value, String> {
         let mut url = self
             .base_url
             .join(path)
@@ -1743,7 +1775,7 @@ impl OpencodeBackend {
             }
         }
 
-        let mut request = self.http.request(method, url);
+        let mut request = self.http.request(method, url).timeout(request_timeout);
         if let Some(password) = self.password.as_deref() {
             request = request.basic_auth(&self.username, Some(password));
         }
@@ -1757,10 +1789,13 @@ impl OpencodeBackend {
             request = request.json(&body);
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|error| format!("opencode request {path} failed: {error}"))?;
+        let response = request.send().await.map_err(|error| {
+            if error.is_timeout() {
+                format!("opencode request {path} timed out")
+            } else {
+                format!("opencode request {path} failed: {error}")
+            }
+        })?;
         let status = response.status();
         if !status.is_success() {
             return Err(format!(
@@ -1772,10 +1807,13 @@ impl OpencodeBackend {
             return Ok(Value::Null);
         }
 
-        response
-            .json::<Value>()
-            .await
-            .map_err(|error| format!("failed decoding opencode response for {path}: {error}"))
+        response.json::<Value>().await.map_err(|error| {
+            if error.is_timeout() {
+                format!("opencode request {path} timed out")
+            } else {
+                format!("failed decoding opencode response for {path}: {error}")
+            }
+        })
     }
 
     pub(super) async fn broadcast_json_notification(&self, method: &str, params: Value) {

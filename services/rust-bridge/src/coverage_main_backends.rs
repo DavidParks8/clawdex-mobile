@@ -124,6 +124,7 @@ struct OpenCodeApiState {
     requests: Mutex<Vec<OpenCodeRequest>>,
     failures: Mutex<HashSet<String>>,
     invalid_json: Mutex<HashSet<String>>,
+    delays: Mutex<HashMap<String, Duration>>,
     message_reads: AtomicU64,
     prompt_started: AtomicBool,
 }
@@ -176,6 +177,10 @@ async fn fake_opencode_api(
     }
     if state.invalid_json.lock().await.contains(&path) {
         return (StatusCode::OK, "not-json").into_response();
+    }
+    let delay = state.delays.lock().await.get(&path).copied();
+    if let Some(delay) = delay {
+        tokio::time::sleep(delay).await;
     }
     if path == "no-content" {
         return StatusCode::NO_CONTENT.into_response();
@@ -1052,6 +1057,24 @@ async fn opencode_http_dispatch_covers_every_supported_method_and_failures() {
         .expect_err("HTTP failure");
     assert!(http_error.contains("HTTP 502"));
     assert!(!http_error.contains("secret backend failure"));
+    server
+        .state
+        .delays
+        .lock()
+        .await
+        .insert("slow-response".to_string(), Duration::from_secs(1));
+    let timeout_error = backend
+        .request_json_with_timeout(
+            HttpMethod::GET,
+            "slow-response",
+            None,
+            None,
+            None,
+            Duration::from_millis(30),
+        )
+        .await
+        .expect_err("slow OpenCode request should time out");
+    assert_eq!(timeout_error, "opencode request slow-response timed out");
 
     let requests = server.state.requests.lock().await;
     assert!(requests.iter().any(|request| {
