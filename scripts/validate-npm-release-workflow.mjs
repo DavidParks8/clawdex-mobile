@@ -31,4 +31,15 @@ const jobsContainingPublish = Object.entries(workflow.jobs ?? {})
   .map(([name]) => name);
 assert(jobsContainingPublish.length === 1 && jobsContainingPublish[0] === 'publish', 'npm publish must have exactly one gated owner');
 
+const publishStep = publish?.steps?.find((step) => step.name === 'Publish to npm (OIDC trusted publishing)');
+assert(publishStep, 'publish step is required');
+assert(
+  publishStep.env?.NPM_DIST_TAG === '${{ steps.publish_target.outputs.publish_tag }}',
+  'the npm dist-tag must enter the publish step through the environment'
+);
+assert(
+  publishStep.run === 'npm publish --access public --tag "$NPM_DIST_TAG"',
+  'the publish command must not interpolate workflow data into shell source'
+);
+
 process.stdout.write('NPM release workflow is valid and single-owner.\n');
