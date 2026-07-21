@@ -59,6 +59,38 @@ describe('transcriptProjectionController', () => {
     ]));
   });
 
+  it('preserves live subagent metadata for the transcript card', () => {
+    const projection = projectTranscript({
+      chat: { ...chat, parentThreadId: undefined },
+      parentChat: null,
+      showToolCalls: false,
+      threadStatuses: new Map([['child-thread', 'running']]),
+      liveAssistantMessages: [{
+        runId: 'run',
+        messageId: 'subagent:task-1',
+        text: '• Spawning sub-agent\n  Thread: child-thread\n  Status: running',
+        role: 'system',
+        systemKind: 'subAgent',
+        subAgentMeta: {
+          tool: 'spawnAgent',
+          senderThreadId: chat.id,
+          receiverThreadIds: ['child-thread'],
+          agentStatus: 'running',
+          navigable: false,
+        },
+      }],
+    });
+
+    expect(projection.messages.at(-1)).toMatchObject({
+      systemKind: 'subAgent',
+      subAgentMeta: {
+        receiverThreadIds: ['child-thread'],
+        agentStatus: 'running',
+        navigable: false,
+      },
+    });
+  });
+
   it('does not append blank or duplicate live assistant text', () => {
     const withAssistant = {
       ...chat,

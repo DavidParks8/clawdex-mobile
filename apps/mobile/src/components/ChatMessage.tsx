@@ -356,6 +356,11 @@ function ChatMessageComponent({
         ? timelineEntries
         : [{ title: message.content, details: [] }];
     const targetThreadId = message.subAgentMeta?.receiverThreadIds?.[0]?.trim() ?? '';
+    const canOpenThread = Boolean(
+      targetThreadId &&
+      message.subAgentMeta?.navigable !== false &&
+      onOpenSubAgentThread
+    );
 
     return (
       <View style={[styles.messageWrapper, styles.messageWrapperAssistant]}>
@@ -365,16 +370,16 @@ function ChatMessageComponent({
             return (
               <Pressable
                 key={`${message.id}-subagent-${String(index)}`}
-                onPress={targetThreadId ? () => onOpenSubAgentThread?.(targetThreadId) : undefined}
-                disabled={!targetThreadId || !onOpenSubAgentThread}
+                onPress={canOpenThread ? () => onOpenSubAgentThread?.(targetThreadId) : undefined}
+                disabled={!canOpenThread}
                 style={[
                   styles.subAgentCard,
                   visual.isError && styles.subAgentCardError,
                 ]}
                 accessibilityRole="button"
                 accessibilityLabel={entry.title}
-                accessibilityHint={targetThreadId ? 'Opens the sub-agent transcript' : undefined}
-                accessibilityState={controlAccessibilityState({ disabled: !targetThreadId || !onOpenSubAgentThread })}
+                accessibilityHint={canOpenThread ? 'Opens the sub-agent transcript' : undefined}
+                accessibilityState={controlAccessibilityState({ disabled: !canOpenThread })}
               >
                 <View style={styles.subAgentHeader}>
                   <Ionicons
@@ -397,7 +402,7 @@ function ChatMessageComponent({
                     ))}
                   </View>
                 ) : null}
-                {targetThreadId && onOpenSubAgentThread ? (
+                {canOpenThread ? (
                   <View style={styles.subAgentOpenHint}>
                     <Text style={styles.subAgentOpenHintText}>Open agent chat</Text>
                     <Ionicons {...decorativeAccessibilityProps} name="chevron-forward" size={12} color={theme.colors.textMuted} />

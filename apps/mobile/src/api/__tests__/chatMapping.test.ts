@@ -44,6 +44,41 @@ describe('chatMapping', () => {
     ]);
   });
 
+  it('maps persisted OpenCode task tools to one non-navigable subagent card', () => {
+    const mapped = mapChat(toRawThread({
+      id: 'parent-thread',
+      acpSnapshot: {
+        version: 2,
+        timeline: [{ sequence: 0, kind: 'tool', canonicalId: 'task-1' }],
+        messages: [],
+        tools: [{
+          id: 'task-1',
+          kind: 'think',
+          status: 'completed',
+          title: 'Inspect workspace',
+          content: '<task id="child-session" state="completed">\n<task_result>Workspace title</task_result>\n</task>',
+          structuredContent: [{ type: 'content', content: { type: 'text', text: 'duplicate' } }],
+          locations: [],
+        }],
+        plan: [], usage: {}, config: [], commands: [],
+        session: { agentId: 'opencode', threadId: 'parent-thread', historyReconstruction: false },
+        active: { toolIds: [] },
+      },
+    }));
+
+    expect(mapped.messages).toHaveLength(1);
+    expect(mapped.messages[0]).toMatchObject({
+      id: 'subagent:task-1',
+      systemKind: 'subAgent',
+      content: expect.stringContaining('Result: Workspace title'),
+      subAgentMeta: {
+        receiverThreadIds: ['v1.b3BlbmNvZGU.Y2hpbGQtc2Vzc2lvbg'],
+        agentStatus: 'completed',
+        navigable: false,
+      },
+    });
+  });
+
   it('maps the checked Rust ACP snapshot fixture without legacy turns', () => {
     const manifest = JSON.parse(
       readFileSync(

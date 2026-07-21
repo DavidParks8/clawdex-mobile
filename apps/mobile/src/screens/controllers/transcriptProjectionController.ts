@@ -19,7 +19,8 @@ export interface LiveAssistantMessage {
   messageId: string;
   text: string;
   role?: 'assistant' | 'user' | 'system';
-  systemKind?: 'tool' | 'reasoning';
+  systemKind?: 'tool' | 'reasoning' | 'subAgent';
+  subAgentMeta?: ChatMessage['subAgentMeta'];
   replacesMessageId?: string;
   terminal?: boolean;
   parts?: ChatMessage['parts'];
@@ -101,6 +102,7 @@ export function projectTranscript({
           content: liveText,
           parts: liveAssistantMessage.parts,
           systemKind: liveAssistantMessage.systemKind,
+          subAgentMeta: liveAssistantMessage.subAgentMeta,
           createdAt: now(),
         },
       ];

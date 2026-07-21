@@ -935,6 +935,33 @@ function mapMessages(raw: RawThread, fallbackCreatedAt: string): ChatMessage[] {
       if (entry.kind === 'tool') {
         const tool = toolsById.get(entry.canonicalId);
         if (!tool) return [];
+        const taskSubagent = parseSnapshotTaskSubagent(
+          tool.content,
+          raw.acpSnapshot?.session.agentId
+        );
+        if (taskSubagent) {
+          return [{
+            id: `subagent:${tool.id}`,
+            role: 'system' as const,
+            content: [
+              taskSubagent.state === 'completed'
+                ? '• Spawned sub-agent'
+                : '• Spawning sub-agent',
+              `  Thread: ${taskSubagent.threadId}`,
+              `  Status: ${taskSubagent.state}`,
+              taskSubagent.result ? `  Result: ${taskSubagent.result}` : null,
+            ].filter(Boolean).join('\n'),
+            systemKind: 'subAgent' as const,
+            subAgentMeta: {
+              tool: 'spawnAgent',
+              senderThreadId: raw.id,
+              receiverThreadIds: [taskSubagent.threadId],
+              agentStatus: taskSubagent.state,
+              navigable: false,
+            },
+            createdAt: new Date(baseTs + index * 1000).toISOString(),
+          }];
+        }
         const structured = renderAgUiCustomContent({
           content: tool.structuredContent,
           locations: tool.locations,
@@ -1062,6 +1089,34 @@ function mapMessages(raw: RawThread, fallbackCreatedAt: string): ChatMessage[] {
   }
 
   return messages;
+}
+
+function parseSnapshotTaskSubagent(
+  content: string,
+  agentId: string | undefined
+): { threadId: string; state: string; result: string | null } | null {
+  const header = content.trimStart().match(/^<task\s+([^>]+)>/);
+  const sessionId = header?.[1]?.match(/\bid="([^"]{1,1024})"/)?.[1]?.trim();
+  const state = header?.[1]?.match(/\bstate="([^"]{1,64})"/)?.[1]?.trim();
+  const normalizedAgentId = agentId?.trim();
+  if (!sessionId || !state || !normalizedAgentId) {
+    return null;
+  }
+  const result = content.match(/<task_result>([\s\S]*?)<\/task_result>/)?.[1]?.trim() || null;
+  return {
+    threadId: `v1.${base64UrlUtf8(normalizedAgentId)}.${base64UrlUtf8(sessionId)}`,
+    state,
+    result: result?.slice(0, 2048) ?? null,
+  };
+}
+
+function base64UrlUtf8(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 function isChatMessagePart(value: unknown): value is ChatMessagePart {

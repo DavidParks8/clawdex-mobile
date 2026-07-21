@@ -213,6 +213,10 @@ function hasText(root: Queryable, value: string): boolean {
   return root.findAll((node) => node.children.includes(value)).length > 0;
 }
 
+function textCount(root: Queryable, value: string): number {
+  return root.findAll((node) => node.children.includes(value)).length;
+}
+
 function messageInput(root: Queryable): Queryable {
   const input = root
     .findAllByType(TextInput)
@@ -539,6 +543,50 @@ describe('MainScreen shell behavior', () => {
       expect.any(String),
       expect.any(Object)
     );
+    expect(hasText(root, 'Real thread')).toBe(true);
+    act(() => tree.unmount());
+  });
+
+  it('shows the first new-chat message immediately and reconciles the server echo once', async () => {
+    let resolveCreate!: (chat: Chat) => void;
+    const createPending = new Promise<Chat>((resolve) => {
+      resolveCreate = resolve;
+    });
+    const serverUserMessage = {
+      id: 'server-user',
+      role: 'user' as const,
+      content: 'Immediate hello',
+      createdAt: '2026-07-20T00:00:01.000Z',
+    };
+    const created = {
+      ...chat,
+      id: 'thread-created',
+      title: 'Real thread',
+      messages: [serverUserMessage],
+    };
+    const api = createApi();
+    api.createChatIdempotent = jest.fn().mockReturnValue(createPending);
+    api.sendChatMessageIdempotent = jest.fn().mockResolvedValue(created);
+    const { tree } = await renderMain({ api });
+    const root = tree.root as Queryable;
+
+    act(() => messageInput(root).props.onChangeText('Immediate hello'));
+    let sendPromise: Promise<void> | undefined;
+    await act(async () => {
+      sendPromise = (root.findAll((candidate) => candidate.props.accessibilityLabel === 'Send message')[0]
+        ?.props.onPress as (() => Promise<void>))();
+      await Promise.resolve();
+    });
+
+    expect(hasText(root, 'Immediate hello')).toBe(true);
+    expect(textCount(root, 'Immediate hello')).toBe(1);
+
+    await act(async () => {
+      resolveCreate(created);
+      await sendPromise;
+    });
+
+    expect(textCount(root, 'Immediate hello')).toBe(1);
     expect(hasText(root, 'Real thread')).toBe(true);
     act(() => tree.unmount());
   });

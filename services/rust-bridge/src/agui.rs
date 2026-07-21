@@ -1,4 +1,5 @@
 use crate::acp::events::{CanonicalEvent, FieldUpdate, MessageRole};
+use crate::acp::identity::AgentSessionId;
 use crate::agui_generated::{AgUiEvent, AgUiEventContent, AgUiEventRole, AgUiEventType, Delta};
 use crate::*;
 use sha2::{Digest, Sha256};
@@ -44,6 +45,7 @@ struct AgUiToolState {
     structured_content: Vec<Value>,
     locations: Vec<Value>,
     structured_truncated: bool,
+    subagent_revision: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -290,6 +292,7 @@ impl AgUiProjector {
                 }
             }
             CanonicalEvent::Tool {
+                agent_id,
                 thread_id,
                 run_id,
                 source_turn_id,
@@ -416,9 +419,47 @@ impl AgUiProjector {
                 let structured_content = state.structured_content.clone();
                 let structured_locations = state.locations.clone();
                 let structured_available = !state.structured_truncated;
+                let subagent = content
+                    .as_deref()
+                    .and_then(parse_task_subagent)
+                    .and_then(|task| {
+                        AgentSessionId::new(agent_id, &task.session_id)
+                            .ok()
+                            .map(|identity| (task, identity.encode()))
+                    });
+                if let Some((task, child_thread_id)) = subagent.as_ref() {
+                    let revision = format!("{}\0{}", child_thread_id, task.state);
+                    if state.subagent_revision.as_deref() != Some(&revision) {
+                        state.subagent_revision = Some(revision);
+                        projection.events.push(envelope(
+                            thread_id,
+                            &run.run_id,
+                            run.source_turn_id.clone(),
+                            custom_event(
+                                "tethercode.dev/subagent".to_string(),
+                                json!({
+                                    "toolCallId": tool_call_id,
+                                    "tool": "spawnAgent",
+                                    "senderThreadId": thread_id,
+                                    "receiverThreadIds": [child_thread_id],
+                                    "agentStatus": task.state,
+                                    "resultPreview": content
+                                        .as_deref()
+                                        .and_then(task_result_preview),
+                                }),
+                                timestamp,
+                            ),
+                        ));
+                    }
+                }
                 if let Some(previous_content) = previous_content {
                     let content = content.clone().unwrap_or_default();
-                    if terminal && content.starts_with(&previous_content) && !content.is_empty() {
+                    if subagent.is_some() {
+                        // The typed subagent event replaces accumulated task XML/tool payloads.
+                    } else if terminal
+                        && content.starts_with(&previous_content)
+                        && !content.is_empty()
+                    {
                         let suffix = &content[previous_content.len()..];
                         for chunk in utf8_chunks(suffix, TOOL_RESULT_CHUNK_BYTES) {
                             projection.events.push(envelope(
@@ -456,7 +497,7 @@ impl AgUiProjector {
                         );
                     }
                 }
-                if changed_structured {
+                if changed_structured && subagent.is_none() {
                     push_structured_chunks(
                         &mut projection.events,
                         thread_id,
@@ -644,6 +685,41 @@ impl AgUiProjector {
         }
         self.closed_threads.insert(thread_id.to_string());
     }
+}
+
+struct TaskSubagent<'a> {
+    session_id: String,
+    state: &'a str,
+}
+
+fn parse_task_subagent(content: &str) -> Option<TaskSubagent<'_>> {
+    let header = content.trim_start().strip_prefix("<task ")?;
+    let header = header.split_once('>')?.0;
+    let session_id = xml_attribute(header, "id")?.trim();
+    let state = xml_attribute(header, "state")?.trim();
+    if session_id.is_empty() || session_id.len() > 1_024 || state.is_empty() || state.len() > 64 {
+        return None;
+    }
+    Some(TaskSubagent {
+        session_id: session_id.to_string(),
+        state,
+    })
+}
+
+fn xml_attribute<'a>(header: &'a str, name: &str) -> Option<&'a str> {
+    let marker = format!(r#"{name}=""#);
+    let value = header.split_once(&marker)?.1;
+    value.split_once('"').map(|(value, _)| value)
+}
+
+fn task_result_preview(content: &str) -> Option<String> {
+    let result = content
+        .split_once("<task_result>")?
+        .1
+        .split_once("</task_result>")?
+        .0
+        .trim();
+    (!result.is_empty()).then(|| bounded(result, 2 * 1024))
 }
 
 fn generated_event(ag_ui_event_type: AgUiEventType, timestamp: i64) -> AgUiEvent {
@@ -1231,6 +1307,61 @@ mod tests {
                 "RUN_FINISHED"
             ]
         );
+    }
+
+    #[test]
+    fn task_tools_project_one_typed_subagent_state_without_duplicate_payloads() {
+        let mut projector = AgUiProjector::default();
+        projector.project_canonical(&canonical_run_started());
+        let task = |state: &str| {
+            CanonicalEvent::Tool {
+            agent_id: "alpha-agent".to_string(),
+            thread_id: "v1.YWxwaGEtYWdlbnQ.c2Vzc2lvbg".to_string(),
+            run_id: Some("run-1".to_string()),
+            source_turn_id: Some("turn-1".to_string()),
+            generation: Some(1),
+            tool_call_id: "task-1".to_string(),
+            kind: ToolKind::Other,
+            status: ToolCallStatus::Completed,
+            title: "task".to_string(),
+            content: FieldUpdate::Set(format!(
+                "<task id=\"child-session\" state=\"{state}\">\n<task_result>done</task_result>\n</task>"
+            )),
+            structured_content: FieldUpdate::Set(vec![json!({
+                "type": "text",
+                "text": "duplicate task result"
+            })]),
+            locations: FieldUpdate::Set(Vec::new()),
+        }
+        };
+
+        let first = projector.project_canonical(&task("completed"));
+        assert_eq!(
+            event_types(&first.events),
+            [
+                "TOOL_CALL_START",
+                "TOOL_CALL_ARGS",
+                "TOOL_CALL_END",
+                "CUSTOM"
+            ]
+        );
+        let custom = serde_json::to_value(first.events.last().unwrap()).unwrap();
+        assert_eq!(custom["event"]["name"], "tethercode.dev/subagent");
+        assert_eq!(custom["event"]["value"]["agentStatus"], "completed");
+        assert_eq!(custom["event"]["value"]["resultPreview"], "done");
+        assert_eq!(
+            custom["event"]["value"]["receiverThreadIds"][0],
+            AgentSessionId::new("alpha-agent", "child-session")
+                .unwrap()
+                .encode()
+        );
+        assert!(!event_types(&first.events).contains(&"TOOL_CALL_RESULT"));
+
+        let repeated = projector.project_canonical(&task("completed"));
+        assert!(repeated.events.is_empty());
+
+        let changed = projector.project_canonical(&task("running"));
+        assert_eq!(event_types(&changed.events), ["CUSTOM"]);
     }
 
     #[test]

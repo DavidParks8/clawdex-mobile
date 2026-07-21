@@ -413,6 +413,28 @@ describe('ChatMessage system timeline matrices', () => {
     act(() => tree.unmount());
   });
 
+  it('shows internal subagent results without a broken transcript action', () => {
+    const onOpenSubAgentThread = jest.fn();
+    const tree = renderMessage({
+      id: 'subagent-internal',
+      role: 'system',
+      systemKind: 'subAgent',
+      content: '• Spawned sub-agent\n  Result: Workspace title',
+      createdAt: '',
+      subAgentMeta: {
+        receiverThreadIds: ['child-internal'],
+        agentStatus: 'completed',
+        navigable: false,
+      },
+    }, { onOpenSubAgentThread });
+    const root = tree.root as QueryableTestInstance;
+    const button = root.findAll((node) => node.props.accessibilityRole === 'button')[0];
+    expect(button?.props.accessibilityState).toMatchObject({ disabled: true });
+    expect(hasRenderedText(root, 'Workspace title')).toBe(true);
+    expect(hasRenderedText(root, 'Open agent chat')).toBe(false);
+    act(() => tree.unmount());
+  });
+
   it('renders collapsed and expanded tool activity groups with error and overflow entries', () => {
     const messages: ApiChatMessage[] = [
       { id: 'one', role: 'system', systemKind: 'tool', content: '• Ran npm test\n  └ pass', createdAt: '2026-04-17T00:00:00.000Z' },

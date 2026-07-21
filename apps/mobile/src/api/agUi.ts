@@ -1,6 +1,6 @@
 import { EventSchemas, EventType, type AGUIEvent } from '@ag-ui/core';
 
-import type { ChatMessagePart, RpcNotification } from './types';
+import type { ChatMessagePart, ChatMessageSubAgentMeta, RpcNotification } from './types';
 
 export interface AgUiEventEnvelope {
   threadId: string;
@@ -14,7 +14,8 @@ export interface AgUiLiveAssistantMessage {
   messageId: string;
   text: string;
   role?: 'assistant' | 'user' | 'system';
-  systemKind?: 'tool' | 'reasoning';
+  systemKind?: 'tool' | 'reasoning' | 'subAgent';
+  subAgentMeta?: ChatMessageSubAgentMeta;
   replacesMessageId?: string;
   terminal?: boolean;
   parts?: ChatMessagePart[];
@@ -178,6 +179,50 @@ export function updateAgUiLiveAssistantMessages(
   }
   if (event.type === EventType.CUSTOM) {
     const value = record(event.value);
+    if (event.name === 'tethercode.dev/subagent') {
+      const toolCallId = nonEmptyString(value?.toolCallId) ?? 'unknown';
+      const receiverThreadIds = Array.isArray(value?.receiverThreadIds)
+        ? value.receiverThreadIds
+            .map(nonEmptyString)
+            .filter((threadId): threadId is string => Boolean(threadId))
+        : [];
+      if (receiverThreadIds.length === 0) {
+        return previous;
+      }
+      const tool = nonEmptyString(value?.tool) ?? 'spawnAgent';
+      const agentStatus = nonEmptyString(value?.agentStatus) ?? undefined;
+      const resultPreview = nonEmptyString(value?.resultPreview);
+      const text = [
+        agentStatus === 'completed' ? '• Spawned sub-agent' : '• Spawning sub-agent',
+        `  Thread: ${receiverThreadIds[0]}`,
+        agentStatus ? `  Status: ${agentStatus}` : null,
+        resultPreview ? `  Result: ${resultPreview}` : null,
+      ].filter(Boolean).join('\n');
+      const messages = (previous[envelope.threadId] ?? []).filter(
+        (message) => !(
+          message.runId === envelope.runId &&
+          (message.messageId === `tool:${toolCallId}` ||
+            message.messageId === `subagent:${toolCallId}`)
+        )
+      );
+      return boundedUpdate(previous, envelope.threadId, [
+        ...messages,
+        {
+          runId: envelope.runId,
+          messageId: `subagent:${toolCallId}`,
+          text,
+          role: 'system',
+          systemKind: 'subAgent',
+          subAgentMeta: {
+            tool,
+            senderThreadId: nonEmptyString(value?.senderThreadId) ?? envelope.threadId,
+            receiverThreadIds: Array.from(new Set(receiverThreadIds)),
+            agentStatus,
+            navigable: false,
+          },
+        },
+      ]);
+    }
     if (event.name.endsWith('-chunk')) {
       const canonicalId = nonEmptyString(value?.canonicalId);
       const revision = nonEmptyString(value?.revision);

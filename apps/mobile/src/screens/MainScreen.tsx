@@ -838,7 +838,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       (
         threadId: string,
         message: ChatTranscriptMessage,
-        options?: { baseChat?: Chat | null }
+        options?: { baseChat?: Chat | null; userOrdinal?: number }
       ) => {
         if (!threadId) {
           return;
@@ -850,7 +850,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           selectedChatRef.current?.id === threadId
             ? selectedChatRef.current
             : options?.baseChat ?? null;
-        const nextUserOrdinal =
+        const nextUserOrdinal = options?.userOrdinal ??
           Math.max(
             countUserMessages(visibleChat?.messages ?? []),
             existingPendingMessages[existingPendingMessages.length - 1]?.userOrdinal ?? 0
@@ -4205,10 +4205,32 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         content: optimisticContent,
         createdAt: new Date().toISOString(),
       };
+      const optimisticChatId = `pending-${submission.id}`;
+      const optimisticCreatedAt = new Date().toISOString();
+      const optimisticChat: Chat = {
+        id: optimisticChatId,
+        title: '',
+        status: 'running',
+        activeTurnId: null,
+        createdAt: optimisticCreatedAt,
+        updatedAt: optimisticCreatedAt,
+        statusUpdatedAt: optimisticCreatedAt,
+        lastMessagePreview: content.slice(0, 50),
+        cwd: preferredStartCwd ?? '',
+        agentId: activeAgentId ?? preferredAgentId ?? 'unknown',
+        messages: [optimisticMessage],
+      };
 
       attachmentController.beginSubmission();
       setDraft('');
       submissionController.markCleared(submission, draftController.snapshot().revision);
+      if (selectedChatIdRef.current === null) {
+        selectedChatIdRef.current = optimisticChatId;
+        selectedChatRef.current = optimisticChat;
+        setSelectedChatId(optimisticChatId);
+        setSelectedChat(optimisticChat);
+        scrollToBottomReliable(true);
+      }
 
       let createdChatId: string | null = null;
       let adoptedCreatedChat = false;
@@ -4216,7 +4238,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         createdChatId
           ? selectedChatIdRef.current === createdChatId ||
             (adoptedCreatedChat && selectedChatIdRef.current === null)
-          : selectedChatIdRef.current === null;
+          : selectedChatIdRef.current === null || selectedChatIdRef.current === optimisticChatId;
       try {
         setCreating(true);
         setActiveTurnId(null);
@@ -4258,18 +4280,30 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
               activeAgentId,
               selectedCollaborationMode
             );
-            queueOptimisticUserMessage(created.id, optimisticMessage, { baseChat: created });
-            if (selectedChatIdRef.current === null) {
+            queueOptimisticUserMessage(created.id, optimisticMessage, {
+              baseChat: created,
+              userOrdinal: 1,
+            });
+            if (
+              selectedChatIdRef.current === null ||
+              selectedChatIdRef.current === optimisticChatId
+            ) {
               adoptedCreatedChat = true;
+              selectedChatIdRef.current = created.id;
               setSelectedChatId(created.id);
-              setSelectedChat({
+              const visibleCreatedChat = {
                 ...created,
                 status: 'running',
                 updatedAt: new Date().toISOString(),
                 statusUpdatedAt: new Date().toISOString(),
                 lastMessagePreview: content.slice(0, 50),
-                messages: [...created.messages, optimisticMessage],
-              });
+                messages:
+                  countUserMessages(created.messages) > 0
+                    ? created.messages
+                    : [...created.messages, optimisticMessage],
+              } satisfies Chat;
+              selectedChatRef.current = visibleCreatedChat;
+              setSelectedChat(visibleCreatedChat);
               scrollToBottomReliable(true);
               setActivity({ tone: 'running', title: 'Working' });
               bumpRunWatchdog();
@@ -4342,6 +4376,12 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         }
         if (createdChatId) {
           discardOptimisticUserMessage(createdChatId, optimisticMessage.id);
+        }
+        if (!createdChatId && selectedChatIdRef.current === optimisticChatId) {
+          selectedChatIdRef.current = null;
+          selectedChatRef.current = null;
+          setSelectedChatId(null);
+          setSelectedChat(null);
         }
         if (isCreatedChatVisible()) {
           handleTurnFailure(err);
@@ -5042,6 +5082,16 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           setLiveAssistantByThread((previous) =>
             updateAgUiLiveAssistantMessages(previous, agUiEnvelope)
           );
+          if (
+            agUiEvent.type === 'CUSTOM' &&
+            agUiEvent.name === 'tethercode.dev/subagent'
+          ) {
+            scheduleAgentThreadsRefresh(agUiEnvelope.threadId);
+            if (agUiEnvelope.threadId === currentId) {
+              schedulePinnedScrollToBottom(true);
+            }
+            return;
+          }
           if (agUiEvent.type === 'TEXT_MESSAGE_CONTENT') {
             if (agUiEnvelope.threadId === currentId) {
               schedulePinnedScrollToBottom(true);

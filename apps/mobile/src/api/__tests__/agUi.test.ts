@@ -496,4 +496,44 @@ describe('AG-UI bridge notifications', () => {
     expect(state.thread[0]?.text).not.toContain('second!');
     expect(state.thread[0]?.toolText).toBe('');
   });
+
+  it('replaces a generic task tool row with one typed subagent card', () => {
+    let state = updateAgUiLiveAssistantMessages({}, {
+      threadId: 'parent',
+      runId: 'run',
+      event: { type: EventType.TOOL_CALL_START, toolCallId: 'task-1', toolCallName: 'task' },
+    });
+    const subagent: AGUIEvent = {
+      type: EventType.CUSTOM,
+      name: 'tethercode.dev/subagent',
+      value: {
+        toolCallId: 'task-1',
+        tool: 'spawnAgent',
+        senderThreadId: 'parent',
+        receiverThreadIds: ['child'],
+        agentStatus: 'running',
+        resultPreview: 'Inspected README.',
+      },
+    };
+    state = updateAgUiLiveAssistantMessages(state, {
+      threadId: 'parent', runId: 'run', event: subagent,
+    });
+    expect(state.parent).toHaveLength(1);
+    expect(state.parent[0]).toMatchObject({
+      messageId: 'subagent:task-1',
+      systemKind: 'subAgent',
+      subAgentMeta: {
+        tool: 'spawnAgent',
+        senderThreadId: 'parent',
+        receiverThreadIds: ['child'],
+        agentStatus: 'running',
+        navigable: false,
+      },
+    });
+    expect(state.parent[0]?.text).toContain('Result: Inspected README.');
+    const repeated = updateAgUiLiveAssistantMessages(state, {
+      threadId: 'parent', runId: 'run', event: subagent,
+    });
+    expect(repeated.parent).toHaveLength(1);
+  });
 });
