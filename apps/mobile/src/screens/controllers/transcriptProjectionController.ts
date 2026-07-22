@@ -1,5 +1,10 @@
 import type { Chat, ChatMessage } from '../../api/types';
-import { filterReasoningMessages } from '../mainScreenHelpers';
+import type { AgUiThreadMessageState } from '../../api/agUiMessages';
+import { getMessageText } from '../../api/messages';
+import {
+  filterReasoningMessages,
+  normalizeChatMessageMatchContent,
+} from '../mainScreenHelpers';
 import { trimInheritedParentMessages } from '../subAgentTranscript';
 import {
   buildTranscriptDisplayItems,
@@ -14,31 +19,19 @@ export interface TranscriptProjection {
   hiddenInheritedMessageCount: number;
 }
 
-export interface LiveAssistantMessage {
-  runId?: string;
-  messageId: string;
-  text: string;
-  role?: 'assistant' | 'user' | 'system';
-  systemKind?: 'tool' | 'reasoning' | 'subAgent';
-  subAgentMeta?: ChatMessage['subAgentMeta'];
-  replacesMessageId?: string;
-  terminal?: boolean;
-  parts?: ChatMessage['parts'];
-}
-
 export function projectTranscript({
   chat,
   parentChat,
   showToolCalls,
   threadStatuses,
-  liveAssistantMessages,
+  liveMessageState,
   now = () => new Date().toISOString(),
 }: {
   chat: Chat;
   parentChat: Chat | null;
   showToolCalls: boolean;
   threadStatuses: ReadonlyMap<string, Chat['status']>;
-  liveAssistantMessages?: readonly LiveAssistantMessage[] | null;
+  liveMessageState?: AgUiThreadMessageState | null;
   now?: () => string;
 }): TranscriptProjection {
   const child = getVisibleTranscriptMessages(
@@ -56,54 +49,75 @@ export function projectTranscript({
           chat.id
         )
       : { messages: child, hiddenInheritedMessageCount: 0 };
-  let messages = syncVisibleSubAgentStatuses(inherited.messages, threadStatuses);
-  const liveMessages = liveAssistantMessages ?? [];
+  let messages = dedupeTransientUserMessages(
+    syncVisibleSubAgentStatuses(inherited.messages, threadStatuses)
+  );
+  const liveMessages = liveMessageState?.messages ?? [];
   const replacedMessageIds = new Set(
-    liveMessages
-      .map((message) => message.replacesMessageId)
-      .filter((messageId): messageId is string => Boolean(messageId))
+    Object.values(liveMessageState?.replacesMessageIdByMessageId ?? {})
   );
-  const persistedMatches = liveMessages.map((liveAssistantMessage) =>
-    messages.find(
-      (message) =>
-        message.role === 'assistant' &&
-        (message.id === liveAssistantMessage.messageId ||
-          liveAssistantMessage.messageId.endsWith(`::item::${message.id}`))
-    )
-  );
-  for (const [index, liveAssistantMessage] of liveMessages.entries()) {
-    const liveText = liveAssistantMessage.text.trim();
+  if (liveMessageState?.authoritativeSnapshot) {
+    const persistedById = new Map(messages.map((message) => [message.id, message]));
+    messages = liveMessages
+      .filter((message) => !replacedMessageIds.has(message.id) && getMessageText(message).trim())
+      .map((message) => {
+        const persisted = persistedById.get(message.id);
+        return {
+          ...message,
+          createdAt: persisted?.createdAt || message.createdAt || now(),
+          parts: persisted?.parts ?? message.parts,
+        } as ChatMessage;
+      });
+  }
+  for (const liveAssistantMessage of liveMessages) {
+    const liveText = getMessageText(liveAssistantMessage).trim();
     if (!liveText) {
       continue;
     }
-    if (replacedMessageIds.has(liveAssistantMessage.messageId)) {
+    if (replacedMessageIds.has(liveAssistantMessage.id)) {
       continue;
     }
-    const persistedLiveMessage = persistedMatches[index];
+    const exactPersistedMessage = messages.find((message) =>
+      message.role === liveAssistantMessage.role &&
+      (message.id === liveAssistantMessage.id ||
+        liveAssistantMessage.id.endsWith(`::item::${message.id}`))
+    );
+    const trailingMessage = messages.at(-1);
+    const persistedLiveMessage = exactPersistedMessage ?? (
+      liveAssistantMessage.role === 'user' &&
+      trailingMessage?.role === 'user' &&
+      normalizeChatMessageMatchContent(getMessageText(trailingMessage)) ===
+        normalizeChatMessageMatchContent(getMessageText(liveAssistantMessage))
+        ? trailingMessage
+        : undefined
+    );
     if (persistedLiveMessage) {
-      const persistedText = persistedLiveMessage.content.trim();
+      const persistedText = getMessageText(persistedLiveMessage).trim();
       if (
-        !liveAssistantMessage.terminal &&
+        !liveMessageState?.terminalMessageIds.includes(liveAssistantMessage.id) &&
+        liveAssistantMessage.role !== 'user' &&
         liveText !== persistedText &&
         liveText.startsWith(persistedText)
       ) {
         messages = messages.map((message) =>
           message === persistedLiveMessage
-            ? { ...message, content: liveText, parts: liveAssistantMessage.parts ?? message.parts }
+            ? {
+                ...message,
+                ...(message.role === 'activity'
+                  ? { content: { ...message.content, text: liveText } }
+                  : { content: liveText }),
+                parts: liveAssistantMessage.parts ?? message.parts,
+              } as ChatMessage
             : message
         );
       }
+      continue;
     } else {
       messages = [
         ...messages,
         {
-          id: liveAssistantMessage.messageId,
-          role: liveAssistantMessage.role ?? 'assistant',
-          content: liveText,
-          parts: liveAssistantMessage.parts,
-          systemKind: liveAssistantMessage.systemKind,
-          subAgentMeta: liveAssistantMessage.subAgentMeta,
-          createdAt: now(),
+          ...liveAssistantMessage,
+          createdAt: liveAssistantMessage.createdAt || now(),
         },
       ];
     }
@@ -113,4 +127,22 @@ export function projectTranscript({
     items: buildTranscriptDisplayItems(messages),
     hiddenInheritedMessageCount: inherited.hiddenInheritedMessageCount,
   };
+}
+
+function dedupeTransientUserMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter((message, index) => {
+    if (!isTransientUserMessage(message)) return true;
+    const content = normalizeChatMessageMatchContent(getMessageText(message));
+    if (!content) return true;
+    return ![messages[index - 1], messages[index + 1]].some((neighbor) =>
+      neighbor?.role === 'user' &&
+      !isTransientUserMessage(neighbor) &&
+      normalizeChatMessageMatchContent(getMessageText(neighbor)) === content
+    );
+  });
+}
+
+function isTransientUserMessage(message: ChatMessage): boolean {
+  return message.role === 'user' &&
+    (message.id.startsWith('msg-') || message.id.startsWith('local-user-'));
 }

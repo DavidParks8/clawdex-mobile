@@ -1,7 +1,10 @@
 import { EventType, type AGUIEvent } from '@ag-ui/core';
+import { getMessageText, getSubAgentMeta } from '../messages';
+import { SUPPORTED_AG_UI_EVENT_TYPES } from '../agUiMessages';
 
 import {
   type AgUiLiveAssistantMessages,
+  createAgUiThreadMessageState,
   parseAgUiEventNotification,
   updateAgUiLiveAssistantMessages,
 } from '../agUi';
@@ -23,7 +26,14 @@ const notification = {
   },
 };
 
+function messages(state: AgUiLiveAssistantMessages, threadId = 'thread') {
+  return state[threadId]?.messages ?? [];
+}
+
 describe('AG-UI bridge notifications', () => {
+  it('handles every event type exported by the installed AG-UI core', () => {
+    expect(SUPPORTED_AG_UI_EVENT_TYPES).toEqual(new Set(Object.values(EventType)));
+  });
   it('parses canonical text events and projects them to the migration reducer', () => {
     expect(parseAgUiEventNotification(notification)).toEqual(notification.params);
   });
@@ -39,8 +49,8 @@ describe('AG-UI bridge notifications', () => {
       runId: 'run',
       event: { type: EventType.TEXT_MESSAGE_CONTENT, messageId: 'user', delta: 'hello' },
     });
-    expect(state.thread).toEqual([
-      expect.objectContaining({ messageId: 'user', role: 'user', text: 'hello' }),
+    expect(messages(state)).toEqual([
+      expect.objectContaining({ id: 'user', role: 'user', content: 'hello' }),
     ]);
   });
 
@@ -78,14 +88,14 @@ describe('AG-UI bridge notifications', () => {
       }),
       {} as AgUiLiveAssistantMessages
     );
-    expect(state.thread[0]?.parts).toEqual([
+    expect(messages(state)[0]?.parts).toEqual([
       { type: 'text', text: 'A' },
       { type: 'image', url: 'image.png' },
       { type: 'text', text: 'B' },
       { type: 'resource', resource: { uri: 'file:///result', text: 'result' } },
       { type: 'audio', mimeType: 'audio/wav', data: 'YQ==' },
     ]);
-    expect(state.thread[0]?.text).toMatch(/A[\s\S]*image\.png[\s\S]*B[\s\S]*result[\s\S]*audio\/wav/);
+    expect(getMessageText(messages(state)[0]!)).toMatch(/A[\s\S]*image\.png[\s\S]*B[\s\S]*result[\s\S]*audio\/wav/);
   });
 
   it('keeps first-seen canonical order when tools and reasoning receive later updates', () => {
@@ -109,8 +119,8 @@ describe('AG-UI bridge notifications', () => {
       }),
       {} as AgUiLiveAssistantMessages
     );
-    expect(state.thread.map((message) => message.messageId)).toEqual([
-      'message-a', 'tool:tool-t', 'message-b', 'reasoning-r',
+    expect(messages(state).map((message) => message.id)).toEqual([
+      'message-a', 'tool-call:tool-t', 'message-b', 'reasoning-r', 'tool-result:tool-t',
     ]);
   });
 
@@ -161,7 +171,7 @@ describe('AG-UI bridge notifications', () => {
       state = updateAgUiLiveAssistantMessages(state, parsed!);
     });
     expect(structuredChunks.join('')).toBe(serialized);
-    expect(state.thread?.[0]?.text).toContain(text);
+    expect(getMessageText(messages(state)[0]!)).toContain(text);
   });
 
   it('validates lifecycle routing and accepts official custom events', () => {
@@ -239,12 +249,13 @@ describe('AG-UI bridge notifications', () => {
       runId: 'run',
       event: { type: EventType.CUSTOM, name: 'tethercode.dev/usage', value: { used: 10, size: 100 } },
     });
-    expect(state.thread).toEqual(expect.arrayContaining([
-      expect.objectContaining({ messageId: 'reasoning', text: 'thinking', systemKind: 'reasoning', terminal: true }),
-      expect.objectContaining({ messageId: 'tool:tool', text: expect.stringContaining('done'), systemKind: 'tool', terminal: true }),
-      expect.objectContaining({ messageId: 'image', text: expect.stringContaining('image/png') }),
-      expect.objectContaining({ messageId: 'run:custom:tethercode.dev/usage', text: expect.stringContaining('used') }),
+    expect(messages(state)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'reasoning', role: 'reasoning', content: 'thinking' }),
+      expect.objectContaining({ id: 'tool-result', role: 'tool', toolCallId: 'tool', content: expect.stringContaining('done') }),
+      expect.objectContaining({ id: 'image', role: 'assistant' }),
     ]));
+    expect(state.thread?.customMetadata['tethercode.dev/usage']).toEqual({ used: 10, size: 100 });
+    expect(state.thread?.terminalMessageIds).toEqual(expect.arrayContaining(['reasoning', 'tool-call:tool']));
 
     for (let index = 0; index < 140; index += 1) {
       state = updateAgUiLiveAssistantMessages(state, {
@@ -253,7 +264,8 @@ describe('AG-UI bridge notifications', () => {
         event: { type: EventType.CUSTOM, name: `tethercode.dev/config-${index}`, value: { index } },
       });
     }
-    expect(state.thread).toHaveLength(128);
+    expect(messages(state).length).toBeLessThanOrEqual(128);
+    expect(state.thread?.customMetadataOrder).toHaveLength(128);
   });
 
   it('rejects malformed typed fields', () => {
@@ -275,6 +287,21 @@ describe('AG-UI bridge notifications', () => {
     })).toBeNull();
   });
 
+  it('stores duplicate command metadata without rendering transcript rows', () => {
+    const commandEvent: AGUIEvent = {
+      type: EventType.CUSTOM,
+      name: 'tethercode.dev/commands',
+      value: { commands: [{ name: 'review', description: 'Review changes' }] },
+    };
+    let state: AgUiLiveAssistantMessages = {};
+    state = updateAgUiLiveAssistantMessages(state, { threadId: 'thread', runId: 'run', event: commandEvent });
+    state = updateAgUiLiveAssistantMessages(state, { threadId: 'thread', runId: 'run', event: commandEvent });
+
+    expect(messages(state)).toEqual([]);
+    expect(state.thread?.customMetadata['tethercode.dev/commands']).toEqual(commandEvent.value);
+    expect(state.thread?.customMetadataOrder).toEqual(['tethercode.dev/commands']);
+  });
+
   it('keeps live assistant messages isolated by thread and run', () => {
     const first = parseAgUiEventNotification(notification)!;
     const state = updateAgUiLiveAssistantMessages({}, first);
@@ -287,8 +314,8 @@ describe('AG-UI bridge notifications', () => {
         delta: 'Other',
       },
     });
-    expect(otherThread['agent-alpha:thread-1']?.[0]?.text).toBe('Hello');
-    expect(otherThread['thread:other']?.[0]?.text).toBe('Other');
+    expect(getMessageText(messages(otherThread, 'agent-alpha:thread-1')[0]!)).toBe('Hello');
+    expect(getMessageText(messages(otherThread, 'thread:other')[0]!)).toBe('Other');
 
     const appended = updateAgUiLiveAssistantMessages(otherThread, {
       threadId: first.threadId,
@@ -299,7 +326,7 @@ describe('AG-UI bridge notifications', () => {
         delta: ' there',
       },
     });
-    expect(appended['agent-alpha:thread-1']?.[0]?.text).toBe('Hello there');
+    expect(getMessageText(messages(appended, 'agent-alpha:thread-1')[0]!)).toBe('Hello there');
 
     const repeated = updateAgUiLiveAssistantMessages(appended, {
       threadId: first.threadId,
@@ -310,7 +337,7 @@ describe('AG-UI bridge notifications', () => {
         delta: ' there',
       },
     });
-    expect(repeated['agent-alpha:thread-1']?.[0]?.text).toBe('Hello there there');
+    expect(getMessageText(messages(repeated, 'agent-alpha:thread-1')[0]!)).toBe('Hello there there');
 
     const secondMessage = updateAgUiLiveAssistantMessages(repeated, {
       threadId: first.threadId,
@@ -321,7 +348,7 @@ describe('AG-UI bridge notifications', () => {
         delta: 'Second message',
       },
     });
-    expect(secondMessage['agent-alpha:thread-1']?.map((message) => message.text)).toEqual([
+    expect(messages(secondMessage, 'agent-alpha:thread-1').map(getMessageText)).toEqual([
       'Hello there there',
       'Second message',
     ]);
@@ -331,20 +358,26 @@ describe('AG-UI bridge notifications', () => {
       runId: first.runId,
       event: { type: EventType.RUN_FINISHED, threadId: first.threadId, runId: first.runId },
     });
-    expect(completed['agent-alpha:thread-1']?.every((message) => message.terminal)).toBe(true);
+    expect(completed['agent-alpha:thread-1']?.terminalMessageIds).toEqual(
+      messages(completed, 'agent-alpha:thread-1').map((message) => message.id)
+    );
     expect(completed['thread:other']).toBeDefined();
     const nextRun = updateAgUiLiveAssistantMessages(completed, {
       threadId: first.threadId,
       runId: 'next-run',
       event: { type: EventType.RUN_STARTED, threadId: first.threadId, runId: 'next-run' },
     });
-    expect(nextRun['agent-alpha:thread-1']).toBeUndefined();
+    expect(messages(nextRun, 'agent-alpha:thread-1')).toEqual([]);
     expect(nextRun['thread:other']).toBeDefined();
   });
 
   it('does not clear a newer live message for a stale terminal event', () => {
     const current = {
-      'agent-alpha:thread-1': [{ runId: 'new-run', messageId: 'message', text: 'current' }],
+      'agent-alpha:thread-1': {
+        ...createAgUiThreadMessageState(),
+        messages: [{ id: 'message', role: 'assistant' as const, content: 'current', createdAt: 'now' }],
+        runByMessageId: { message: 'new-run' },
+      },
     };
     expect(updateAgUiLiveAssistantMessages(current, {
       threadId: 'agent-alpha:thread-1',
@@ -365,10 +398,8 @@ describe('AG-UI bridge notifications', () => {
       },
     });
 
-    expect(state['thread:active']?.[0]).toMatchObject({
-      messageId: 'final',
-      replacesMessageId: 'draft',
-    });
+    expect(messages(state, 'thread:active')[0]).toMatchObject({ id: 'final' });
+    expect(state['thread:active']?.replacesMessageIdByMessageId).toEqual({ final: 'draft' });
     const withContent = updateAgUiLiveAssistantMessages(state, {
       threadId: 'thread:active',
       runId: 'run',
@@ -378,10 +409,7 @@ describe('AG-UI bridge notifications', () => {
         delta: 'Corrected',
       },
     });
-    expect(withContent['thread:active']?.[0]).toMatchObject({
-      text: 'Corrected',
-      replacesMessageId: 'draft',
-    });
+    expect(messages(withContent, 'thread:active')[0]).toMatchObject({ content: 'Corrected' });
   });
 
   it('reconciles reasoning and tools by canonical id in either snapshot order', () => {
@@ -389,7 +417,16 @@ describe('AG-UI bridge notifications', () => {
       type: EventType.MESSAGES_SNAPSHOT,
       messages: [
         { id: 'reasoning', role: 'reasoning' as const, content: 'snapshot reasoning' },
-        { id: 'tool:tool', role: 'assistant' as const, content: 'snapshot tool' },
+        {
+          id: 'tool-call:tool',
+          role: 'assistant' as const,
+          content: '',
+          toolCalls: [{
+            id: 'tool',
+            type: 'function' as const,
+            function: { name: 'live tool', arguments: '{}' },
+          }],
+        },
       ],
     };
     const liveEvents = [
@@ -405,10 +442,11 @@ describe('AG-UI bridge notifications', () => {
     );
 
     for (const events of [[...liveEvents, snapshot], [snapshot, ...liveEvents]]) {
-      const messages = reduce(events as AGUIEvent[]).thread;
-      expect(messages.filter((message) => message.messageId === 'reasoning')).toHaveLength(1);
-      expect(messages.filter((message) => message.messageId === 'tool:tool')).toHaveLength(1);
-      expect(messages.find((message) => message.messageId === 'reasoning')?.text).toBeTruthy();
+      const reduced = reduce(events as AGUIEvent[]);
+      const reducedMessages = messages(reduced);
+      expect(reducedMessages.filter((message) => message.id === 'reasoning')).toHaveLength(1);
+      expect(reducedMessages.filter((message) => message.id === 'tool-call:tool')).toHaveLength(1);
+      expect(getMessageText(reducedMessages.find((message) => message.id === 'reasoning')!)).toBeTruthy();
     }
   });
 
@@ -438,9 +476,9 @@ describe('AG-UI bridge notifications', () => {
     const replaced = updateAgUiLiveAssistantMessages(repeated, {
       threadId: 'thread', runId: 'run', event: structured('two', 'terminal-2'),
     });
-    expect(replaced.thread).toHaveLength(1);
-    expect(replaced.thread[0]?.text).toContain('terminal-2');
-    expect(replaced.thread[0]?.text).not.toContain('terminal-1');
+    expect(messages(replaced)).toHaveLength(2);
+    expect(getMessageText(messages(replaced).find((message) => message.role === 'tool')!)).toContain('terminal-2');
+    expect(getMessageText(messages(replaced).find((message) => message.role === 'tool')!)).not.toContain('terminal-1');
     const cleared = updateAgUiLiveAssistantMessages(replaced, {
       threadId: 'thread',
       runId: 'run',
@@ -450,8 +488,8 @@ describe('AG-UI bridge notifications', () => {
         value: { toolCallId: 'tool', revision: 'empty', content: [], locations: [] },
       },
     });
-    expect(cleared.thread[0]?.text).not.toContain('terminal-2');
-    expect(cleared.thread[0]?.structuredText).toBe('');
+    expect(getMessageText(messages(cleared).find((message) => message.role === 'tool')!)).not.toContain('terminal-2');
+    expect(cleared.thread?.structuredTextByCallId.tool).toBe('');
   });
 
   it('replaces revisioned tool text and only appends official suffix deltas', () => {
@@ -475,8 +513,8 @@ describe('AG-UI bridge notifications', () => {
     state = updateAgUiLiveAssistantMessages(duplicate, {
       threadId: 'thread', runId: 'run', event: replacement('two', 'second'),
     });
-    expect(state.thread[0]?.text).toContain('second');
-    expect(state.thread[0]?.text).not.toContain('first');
+    expect(getMessageText(messages(state).find((message) => message.role === 'tool')!)).toContain('second');
+    expect(getMessageText(messages(state).find((message) => message.role === 'tool')!)).not.toContain('first');
     state = updateAgUiLiveAssistantMessages(state, {
       threadId: 'thread',
       runId: 'run',
@@ -488,13 +526,12 @@ describe('AG-UI bridge notifications', () => {
         content: '!',
       },
     });
-    expect(state.thread[0]?.text).toContain('second!');
-    expect(state.thread[0]?.text).not.toContain('firstsecond');
+    expect(getMessageText(messages(state).find((message) => message.role === 'tool')!)).toContain('second!');
+    expect(getMessageText(messages(state).find((message) => message.role === 'tool')!)).not.toContain('firstsecond');
     state = updateAgUiLiveAssistantMessages(state, {
       threadId: 'thread', runId: 'run', event: replacement('empty', ''),
     });
-    expect(state.thread[0]?.text).not.toContain('second!');
-    expect(state.thread[0]?.toolText).toBe('');
+    expect(getMessageText(messages(state).find((message) => message.role === 'tool')!)).not.toContain('second!');
   });
 
   it('replaces a generic task tool row with one typed subagent card', () => {
@@ -504,36 +541,44 @@ describe('AG-UI bridge notifications', () => {
       event: { type: EventType.TOOL_CALL_START, toolCallId: 'task-1', toolCallName: 'task' },
     });
     const subagent: AGUIEvent = {
-      type: EventType.CUSTOM,
-      name: 'tethercode.dev/subagent',
-      value: {
-        toolCallId: 'task-1',
-        tool: 'spawnAgent',
-        senderThreadId: 'parent',
-        receiverThreadIds: ['child'],
-        agentStatus: 'running',
-        resultPreview: 'Inspected README.',
+      type: EventType.ACTIVITY_SNAPSHOT,
+      messageId: 'subagent:task-1',
+      activityType: 'tethercode.subagent',
+      replace: true,
+      content: {
+        text: '• Spawning sub-agent\n  Thread: child\n  Status: running\n  Result: Inspected README.',
+        subAgent: {
+          toolCallId: 'task-1',
+          tool: 'spawnAgent',
+          senderThreadId: 'parent',
+          receiverThreadIds: ['child'],
+          agentStatus: 'running',
+          navigable: false,
+        },
       },
     };
     state = updateAgUiLiveAssistantMessages(state, {
       threadId: 'parent', runId: 'run', event: subagent,
     });
-    expect(state.parent).toHaveLength(1);
-    expect(state.parent[0]).toMatchObject({
-      messageId: 'subagent:task-1',
-      systemKind: 'subAgent',
-      subAgentMeta: {
+    expect(messages(state, 'parent')).toHaveLength(1);
+    const message = messages(state, 'parent')[0]!;
+    expect(message).toMatchObject({
+      id: 'subagent:task-1',
+      role: 'activity',
+      activityType: 'tethercode.subagent',
+    });
+    expect(getSubAgentMeta(message)).toEqual({
+      toolCallId: 'task-1',
         tool: 'spawnAgent',
         senderThreadId: 'parent',
         receiverThreadIds: ['child'],
         agentStatus: 'running',
         navigable: false,
-      },
     });
-    expect(state.parent[0]?.text).toContain('Result: Inspected README.');
+    expect(getMessageText(message)).toContain('Result: Inspected README.');
     const repeated = updateAgUiLiveAssistantMessages(state, {
       threadId: 'parent', runId: 'run', event: subagent,
     });
-    expect(repeated.parent).toHaveLength(1);
+    expect(messages(repeated, 'parent')).toHaveLength(1);
   });
 });

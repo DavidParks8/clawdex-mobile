@@ -1,4 +1,5 @@
 import type { RawAcpSnapshot } from './chatMapping';
+import type { Message } from '@ag-ui/core';
 
 export type ChatStatus = 'idle' | 'running' | 'error' | 'complete';
 export type AgentId = string;
@@ -9,9 +10,10 @@ export interface AgentDefaultSettings {
 
 export type AgentDefaultSettingsMap = Record<AgentId, AgentDefaultSettings>;
 
-export type ChatMessageRole = 'user' | 'assistant' | 'system';
+export type ChatMessageRole = Message['role'];
 
 export interface ChatMessageSubAgentMeta {
+  toolCallId?: string;
   tool?: string;
   prompt?: string;
   senderThreadId?: string;
@@ -27,15 +29,13 @@ export type ChatMessagePart =
   | { type: 'resourceLink'; uri: string; name?: string; description?: string; mimeType?: string; size?: number }
   | { type: 'resource'; resource: { uri?: string; text?: string; blob?: string; mimeType?: string; [key: string]: unknown } };
 
-export interface ChatMessage {
-  id: string;
-  role: ChatMessageRole;
-  content: string;
+interface ChatMessageMetadata {
   parts?: ChatMessagePart[];
   createdAt: string;
-  systemKind?: 'tool' | 'reasoning' | 'subAgent' | 'compaction';
-  subAgentMeta?: ChatMessageSubAgentMeta;
+  pending?: boolean;
 }
+
+export type ChatMessage = Message & ChatMessageMetadata;
 
 export interface ChatSummary {
   id: string;

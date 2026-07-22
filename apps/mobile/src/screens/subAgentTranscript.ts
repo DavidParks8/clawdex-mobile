@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../api/types';
+import { getMessageText, getSubAgentMeta } from '../api/messages';
 
 export interface TrimmedSubAgentTranscript {
   messages: ChatMessage[];
@@ -63,7 +64,7 @@ function findSpawnPromptStartIndex(
       return false;
     }
 
-    const candidate = normalizeUserPromptContent(message.content);
+    const candidate = normalizeUserPromptContent(getMessageText(message));
     if (!candidate) {
       return false;
     }
@@ -83,11 +84,7 @@ function findSpawnPrompt(
   let fallbackPrompt: string | null = null;
 
   for (const message of parentMessages) {
-    if (message.systemKind !== 'subAgent') {
-      continue;
-    }
-
-    const meta = message.subAgentMeta;
+    const meta = getSubAgentMeta(message);
     if (!meta) {
       continue;
     }
@@ -129,8 +126,7 @@ function sharedLeadingMessageCount(left: ChatMessage[], right: ChatMessage[]): n
 function messagesMatch(left: ChatMessage, right: ChatMessage): boolean {
   return (
     left.role === right.role &&
-    left.systemKind === right.systemKind &&
-    normalizeMessageContent(left.content) === normalizeMessageContent(right.content)
+    normalizeMessageContent(getMessageText(left)) === normalizeMessageContent(getMessageText(right))
   );
 }
 

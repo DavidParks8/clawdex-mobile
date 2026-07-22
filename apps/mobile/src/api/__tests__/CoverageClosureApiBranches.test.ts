@@ -4,10 +4,17 @@ import * as FileSystem from 'expo-file-system/legacy';
 import {
   parseAgUiEventNotification,
   renderAgUiCustomContent,
+  createAgUiThreadMessageState,
   updateAgUiLiveAssistantMessages,
   type AgUiEventEnvelope,
   type AgUiLiveAssistantMessages,
 } from '../agUi';
+import {
+  createActivityMessage,
+  getMessageText,
+  getSubAgentMeta,
+  SUBAGENT_ACTIVITY_TYPE,
+} from '../messages';
 import {
   applySnapshotToChat,
   mapChat,
@@ -324,10 +331,10 @@ describe('CoverageClosure chat mapping branches', () => {
       explanation: 'Explain it',
       steps: [{ step: 'First', status: 'pending' }, { step: 'Second', status: 'pending' }],
     });
-    expect(chat.messages.map((message) => message.systemKind)).toEqual(expect.arrayContaining([
-      'reasoning', 'subAgent', 'compaction',
+    expect(chat.messages.map((message) => message.role)).toEqual(expect.arrayContaining([
+      'reasoning', 'activity',
     ]));
-    expect(chat.messages.map((message) => message.content).join('\n')).toMatch(
+    expect(chat.messages.map(getMessageText).join('\n')).toMatch(
       /Command failed|Tool failed|Running command|Calling tool|Spawned sub-agent|Searched web|Viewed image|Entered review mode|Compacted/
     );
   });
@@ -532,16 +539,23 @@ describe('CoverageClosure AG-UI branches', () => {
 
   it('covers reducer no-ops, implicit starts, terminal marking, and snapshots', () => {
     const existing: AgUiLiveAssistantMessages = {
-      thread: [{ runId: 'run', messageId: 'same', text: 'old', role: 'assistant' }],
+      thread: {
+        ...createAgUiThreadMessageState(),
+        messages: [{ id: 'same', role: 'assistant', content: 'old', createdAt: 'now' }],
+        runByMessageId: { same: 'run' },
+      },
     };
     expect(updateAgUiLiveAssistantMessages({}, {
       threadId: 'missing', runId: 'run',
       event: { type: EventType.RUN_STARTED, threadId: 'missing', runId: 'run' },
-    })).toEqual({});
-    expect(updateAgUiLiveAssistantMessages(existing, {
+    }).missing).toEqual(createAgUiThreadMessageState());
+    const withSystem = updateAgUiLiveAssistantMessages(existing, {
       threadId: 'thread', runId: 'run',
       event: { type: EventType.TEXT_MESSAGE_START, messageId: 'bad', role: 'system' },
-    })).toBe(existing);
+    });
+    expect(withSystem.thread?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'bad', role: 'system', content: '' }),
+    ]));
     expect(updateAgUiLiveAssistantMessages(existing, {
       threadId: 'thread', runId: 'run',
       event: { type: EventType.TEXT_MESSAGE_START, messageId: 'same', role: 'assistant' },
@@ -565,8 +579,8 @@ describe('CoverageClosure AG-UI branches', () => {
       } as unknown as AGUIEvent,
       { type: EventType.RUN_ERROR, message: 'done' },
     ]);
-    expect(state.thread.map((message) => message.messageId)).toEqual(['tool:tool', 'implicit', 'reason']);
-    expect(state.thread.every((message) => message.terminal)).toBe(true);
+    expect(state.thread?.messages.map((message) => message.id)).toEqual(['implicit', 'reason', 'ignored']);
+    expect(state.thread?.terminalMessageIds).toEqual(expect.arrayContaining(['implicit', 'reason', 'ignored']));
   });
 
   it('validates chunk metadata and handles reset, parse failure, and completed assemblies', () => {
@@ -588,18 +602,18 @@ describe('CoverageClosure AG-UI branches', () => {
     state = updateAgUiLiveAssistantMessages(state, chunk({
       canonicalId: 'message', revision: 'r', index: 1, count: 3, data: 'bad',
     }));
-    expect(state.thread[0]?.customChunkAssemblies).toBeDefined();
+    expect(state.thread?.chunkAssemblies).toBeDefined();
     const pending = updateAgUiLiveAssistantMessages({}, chunk({
       canonicalId: 'message', revision: 'bad-json', index: 0, count: 1, data: '{',
     }));
-    expect(pending.thread[0]?.customChunkAssemblies).toBeDefined();
+    expect(pending.thread?.chunkAssemblies).toBeDefined();
 
     const payload = JSON.stringify({ messageId: 'message', role: 'thought', content: { type: 'text', text: 'complete' } });
     const complete = updateAgUiLiveAssistantMessages({}, chunk({
       canonicalId: 'message', revision: 'complete', index: 0, count: 1, data: payload,
     }));
-    expect(complete.thread[0]).toMatchObject({ text: 'complete', systemKind: 'reasoning' });
-    expect(complete.thread[0]?.customChunkAssemblies).toBeUndefined();
+    expect(complete.thread?.messages[0]).toMatchObject({ content: 'complete', role: 'reasoning' });
+    expect(complete.thread?.chunkAssemblies).toEqual({});
   });
 
   it('covers custom tool fallbacks, duplicate revisions, and generic custom events', () => {
@@ -616,11 +630,14 @@ describe('CoverageClosure AG-UI branches', () => {
     customEvents.forEach((event) => {
       state = updateAgUiLiveAssistantMessages(state, { threadId: 'thread', runId: 'run', event });
     });
-    expect(state.thread).toEqual(expect.arrayContaining([
-      expect.objectContaining({ messageId: 'run:content', role: 'system', systemKind: 'tool' }),
-      expect.objectContaining({ messageId: 'tool:unknown' }),
-      expect.objectContaining({ messageId: 'run:custom:tethercode.dev/plan', systemKind: 'reasoning' }),
+    expect(state.thread?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'run:content', role: 'assistant' }),
+      expect.objectContaining({ id: 'tool-result:unknown', role: 'tool' }),
     ]));
+    expect(state.thread?.customMetadata).toEqual(expect.objectContaining({
+      'tethercode.dev/plan': { entries: [] },
+      'tethercode.dev/unknown': 'value',
+    }));
   });
 
   it('renders every structured content fallback without copied rendering logic', () => {
@@ -1169,22 +1186,20 @@ describe('CoverageClosure client branches and WS boundary', () => {
 
     const chat = mapChat({ id: 'cached', turns: [] });
     chat.messages = [
-      {
-        id: 'with-meta', role: 'system', content: 'meta', createdAt: chat.createdAt,
-        subAgentMeta: { tool: 'spawnAgent', receiverThreadIds: ['child'] },
-      },
-      {
-        id: 'without-receivers', role: 'system', content: 'meta', createdAt: chat.createdAt,
-        subAgentMeta: { tool: 'wait' },
-      },
+      createActivityMessage('with-meta', SUBAGENT_ACTIVITY_TYPE, {
+        text: 'meta', subAgent: { tool: 'spawnAgent', receiverThreadIds: ['child'] },
+      }, chat.createdAt),
+      createActivityMessage('without-receivers', SUBAGENT_ACTIVITY_TYPE, {
+        text: 'meta', subAgent: { tool: 'wait' },
+      }, chat.createdAt),
       { id: 'plain', role: 'assistant', content: 'plain', createdAt: chat.createdAt },
     ];
     client.rememberChat(chat);
     expect(client.peekChatShell('cached')).toMatchObject({ id: 'cached' });
     await expect(client.getChat('cached', { cacheTtlMs: 1000 })).resolves.toMatchObject({ id: 'cached' });
     const clone = client.peekChat('cached') as Chat;
-    clone.messages[0].subAgentMeta?.receiverThreadIds?.push('mutated');
-    expect(client.peekChat('cached')?.messages[0].subAgentMeta?.receiverThreadIds).toEqual(['child']);
+    getSubAgentMeta(clone.messages[0])?.receiverThreadIds?.push('mutated');
+    expect(getSubAgentMeta(client.peekChat('cached')!.messages[0])?.receiverThreadIds).toEqual(['child']);
 
     client.rememberAllChats([chat]);
     await expect(client.listAllChats({ cacheTtlMs: 1000 })).resolves.toMatchObject({

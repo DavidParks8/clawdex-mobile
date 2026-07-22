@@ -226,9 +226,36 @@ impl RuntimeBackend {
             .await
             .ok_or_else(|| "ACP canonical event receiver already taken".to_string())?;
         let event_hub = hub.clone();
+        let snapshot_manager = manager.clone();
         let event_pump = tokio::spawn(async move {
             while let Some(event) = events.recv().await {
                 event_hub.broadcast_canonical_event(&event).await;
+                let terminal = match &event {
+                    crate::acp::events::CanonicalEvent::RunFinished {
+                        thread_id,
+                        run_id,
+                        source_turn_id,
+                        ..
+                    }
+                    | crate::acp::events::CanonicalEvent::RunFailed {
+                        thread_id,
+                        run_id,
+                        source_turn_id,
+                        ..
+                    } => Some((thread_id.clone(), run_id.clone(), source_turn_id.clone())),
+                    _ => None,
+                };
+                if let Some((thread_id, run_id, source_turn_id)) = terminal {
+                    if let Ok(session) = snapshot_manager.read_session(&thread_id).await {
+                        event_hub
+                            .broadcast_ag_ui_envelope(crate::agui::messages_snapshot_envelope(
+                                &session.snapshot,
+                                run_id,
+                                Some(source_turn_id),
+                            ))
+                            .await;
+                    }
+                }
             }
         });
         Ok(Arc::new(Self {

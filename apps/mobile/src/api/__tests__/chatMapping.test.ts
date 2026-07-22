@@ -10,6 +10,12 @@ import {
   toRecord,
 } from '../chatMapping';
 import { renderAgUiCustomContent } from '../agUi';
+import {
+  COMPACTION_ACTIVITY_TYPE,
+  getMessageText,
+  getSubAgentMeta,
+  SUBAGENT_ACTIVITY_TYPE,
+} from '../messages';
 
 describe('chatMapping', () => {
   it('converges snapshot and live chronology across messages, tools, reasoning, and updates', () => {
@@ -69,13 +75,16 @@ describe('chatMapping', () => {
     expect(mapped.messages).toHaveLength(1);
     expect(mapped.messages[0]).toMatchObject({
       id: 'subagent:task-1',
-      systemKind: 'subAgent',
-      content: expect.stringContaining('Result: Workspace title'),
-      subAgentMeta: {
+      role: 'activity',
+      activityType: SUBAGENT_ACTIVITY_TYPE,
+    });
+    expect(getMessageText(mapped.messages[0])).toContain('Result: Workspace title');
+    expect(getSubAgentMeta(mapped.messages[0])).toEqual({
+        tool: 'spawnAgent',
+        senderThreadId: 'parent-thread',
         receiverThreadIds: ['v1.b3BlbmNvZGU.Y2hpbGQtc2Vzc2lvbg'],
         agentStatus: 'completed',
         navigable: false,
-      },
     });
   });
 
@@ -101,10 +110,11 @@ describe('chatMapping', () => {
           role: 'assistant',
           content: expect.stringMatching(/Snapshot A[\s\S]*\[image: data:image\/png;base64,aW1hZ2U=\][\s\S]*Snapshot B[\s\S]*\[resource: file:\/\/\/tmp\/result.txt\][\s\S]*embedded result[\s\S]*\[audio: audio\/wav\]/),
         }),
-        expect.objectContaining({ id: 'reasoning-1', systemKind: 'reasoning' }),
+        expect.objectContaining({ id: 'reasoning-1', role: 'reasoning' }),
         expect.objectContaining({
           id: 'tool:tool-1',
-          systemKind: 'tool',
+          role: 'tool',
+          toolCallId: 'tool-1',
           content: expect.stringMatching(/done[\s\S]*structured[\s\S]*\[diff: src\/file.ts\][\s\S]*\[terminal: terminal-1\][\s\S]*\[location: src\/file.ts:7\]/),
         }),
       ])
@@ -330,10 +340,9 @@ describe('chatMapping', () => {
 
     expect(chat.messages).toHaveLength(3);
     expect(chat.messages[0].role).toBe('user');
-    expect(chat.messages[1].role).toBe('system');
-    expect(chat.messages[1].systemKind).toBe('tool');
-    expect(chat.messages[1].content).toContain('• Ran `git status --short`');
-    expect(chat.messages[1].content).toContain('M apps/mobile/src/api/ws.ts');
+    expect(chat.messages[1].role).toBe('tool');
+    expect(getMessageText(chat.messages[1])).toContain('• Ran `git status --short`');
+    expect(getMessageText(chat.messages[1])).toContain('M apps/mobile/src/api/ws.ts');
     expect(chat.messages[2].role).toBe('assistant');
     expect(chat.messages[2].content).toBe('Done');
   });
@@ -380,14 +389,13 @@ describe('chatMapping', () => {
       })
     );
 
-    const systemMessages = chat.messages.filter((message) => message.role === 'system');
-    expect(systemMessages).toHaveLength(4);
-    expect(systemMessages.every((message) => message.systemKind === 'tool')).toBe(true);
-    expect(systemMessages[0].content).toContain('• Explored');
-    expect(systemMessages[1].content).toContain('• Searched web for "react native keyboard inset"');
-    expect(systemMessages[2].content).toContain('• Called tool `filesystem / read_file`');
-    expect(systemMessages[3].content).toContain('• Applied file changes to MainScreen.tsx');
-    expect(systemMessages[3].content).toContain('apps/mobile/src/screens/MainScreen.tsx');
+    const toolMessages = chat.messages.filter((message) => message.role === 'tool');
+    expect(toolMessages).toHaveLength(4);
+    expect(getMessageText(toolMessages[0])).toContain('• Explored');
+    expect(getMessageText(toolMessages[1])).toContain('• Searched web for "react native keyboard inset"');
+    expect(getMessageText(toolMessages[2])).toContain('• Called tool `filesystem / read_file`');
+    expect(getMessageText(toolMessages[3])).toContain('• Applied file changes to MainScreen.tsx');
+    expect(getMessageText(toolMessages[3])).toContain('apps/mobile/src/screens/MainScreen.tsx');
   });
 
   it('maps function call items into visible tool timeline entries', () => {
@@ -435,17 +443,16 @@ describe('chatMapping', () => {
       })
     );
 
-    const systemMessages = chat.messages.filter((message) => message.role === 'system');
-    expect(systemMessages).toHaveLength(3);
-    expect(systemMessages.every((message) => message.systemKind === 'tool')).toBe(true);
-    expect(systemMessages[0].content).toContain(
+    const toolMessages = chat.messages.filter((message) => message.role === 'tool');
+    expect(toolMessages).toHaveLength(3);
+    expect(getMessageText(toolMessages[0])).toContain(
       "• Ran `sed -n '1,80p' apps/mobile/src/api/chatMapping.ts`"
     );
-    expect(systemMessages[0].content).toContain('cwd: /repo');
-    expect(systemMessages[1].content).toContain('• Tool output `call_read_file`');
-    expect(systemMessages[1].content).toContain('import type { Chat }');
-    expect(systemMessages[2].content).toContain('• Tool output `custom_call_read_file`');
-    expect(systemMessages[2].content).toContain('custom output');
+    expect(getMessageText(toolMessages[0])).toContain('cwd: /repo');
+    expect(getMessageText(toolMessages[1])).toContain('• Tool output `call_read_file`');
+    expect(getMessageText(toolMessages[1])).toContain('import type { Chat }');
+    expect(getMessageText(toolMessages[2])).toContain('• Tool output `custom_call_read_file`');
+    expect(getMessageText(toolMessages[2])).toContain('custom output');
   });
 
   it('maps MCP and search function calls into readable timeline entries', () => {
@@ -520,9 +527,8 @@ describe('chatMapping', () => {
     );
 
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('tool');
-    expect(chat.messages[0].content).toContain(
+    expect(chat.messages[0].role).toBe('tool');
+    expect(getMessageText(chat.messages[0])).toContain(
       '• Applied file changes to MainScreen.tsx'
     );
     expect(chat.messages[0].content).toContain('apps/mobile/src/screens/MainScreen.tsx');
@@ -594,10 +600,9 @@ describe('chatMapping', () => {
     );
 
     expect(chat.messages).toHaveLength(2);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('reasoning');
-    expect(chat.messages[0].content).toContain('• Reasoning');
-    expect(chat.messages[0].content).toContain('Inspecting the current workspace');
+    expect(chat.messages[0].role).toBe('reasoning');
+    expect(getMessageText(chat.messages[0])).toContain('• Reasoning');
+    expect(getMessageText(chat.messages[0])).toContain('Inspecting the current workspace');
     expect(chat.messages[1].role).toBe('assistant');
   });
 
@@ -624,9 +629,9 @@ describe('chatMapping', () => {
     );
 
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('compaction');
-    expect(chat.messages[0].content).toContain('Compacted conversation context');
+    expect(chat.messages[0].role).toBe('activity');
+    expect(chat.messages[0].role === 'activity' && chat.messages[0].activityType).toBe(COMPACTION_ACTIVITY_TYPE);
+    expect(getMessageText(chat.messages[0])).toContain('Compacted conversation context');
   });
 
   it('maps reasoning items that use content arrays', () => {
@@ -657,10 +662,9 @@ describe('chatMapping', () => {
     );
 
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('reasoning');
-    expect(chat.messages[0].content).toContain('Checking how the bridge forwards live events.');
-    expect(chat.messages[0].content).toContain('Comparing persisted thread items with live deltas.');
+    expect(chat.messages[0].role).toBe('reasoning');
+    expect(getMessageText(chat.messages[0])).toContain('Checking how the bridge forwards live events.');
+    expect(getMessageText(chat.messages[0])).toContain('Comparing persisted thread items with live deltas.');
   });
 
   it('maps structured reasoning summary text into visible transcript details', () => {
@@ -692,10 +696,9 @@ describe('chatMapping', () => {
     );
 
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('reasoning');
-    expect(chat.messages[0].content).toContain('• Reasoning');
-    expect(chat.messages[0].content).toContain(
+    expect(chat.messages[0].role).toBe('reasoning');
+    expect(getMessageText(chat.messages[0])).toContain('• Reasoning');
+    expect(getMessageText(chat.messages[0])).toContain(
       'Read the transcript mapper and checked tool item shapes.'
     );
   });
@@ -968,12 +971,12 @@ describe('chatMapping', () => {
     expect(chat.agentNickname).toBe('Atlas');
     expect(chat.agentRole).toBe('explorer');
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('subAgent');
-    expect(chat.messages[0].content).toContain('• Spawned sub-agent');
-    expect(chat.messages[0].content).toContain('Prompt: Inspect the websocket protocol');
-    expect(chat.messages[0].content).toContain('Thread: thr_sub');
-    expect(chat.messages[0].subAgentMeta).toEqual({
+    expect(chat.messages[0].role).toBe('activity');
+    expect(chat.messages[0].role === 'activity' && chat.messages[0].activityType).toBe(SUBAGENT_ACTIVITY_TYPE);
+    expect(getMessageText(chat.messages[0])).toContain('• Spawned sub-agent');
+    expect(getMessageText(chat.messages[0])).toContain('Prompt: Inspect the websocket protocol');
+    expect(getMessageText(chat.messages[0])).toContain('Thread: thr_sub');
+    expect(getSubAgentMeta(chat.messages[0])).toEqual({
       tool: 'spawn_agent',
       prompt: 'Inspect the websocket protocol and summarize it',
       senderThreadId: 'thr_root',
@@ -1055,11 +1058,10 @@ describe('chatMapping', () => {
     );
 
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('tool');
-    expect(chat.messages[0].content).toContain('• Called tool `computer_use / get_app_state`');
-    expect(chat.messages[0].content).toContain('Computer Use state');
-    expect(chat.messages[0].content).toContain(`[image: ${dataUrl}]`);
+    expect(chat.messages[0].role).toBe('tool');
+    expect(getMessageText(chat.messages[0])).toContain('• Called tool `computer_use / get_app_state`');
+    expect(getMessageText(chat.messages[0])).toContain('Computer Use state');
+    expect(getMessageText(chat.messages[0])).toContain(`[image: ${dataUrl}]`);
   });
 
   it('maps mcp tool result structuredContent screenshots into previewable system details', () => {
@@ -1103,11 +1105,10 @@ describe('chatMapping', () => {
     );
 
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('tool');
-    expect(chat.messages[0].content).toContain('• Called tool `computer-use / get_app_state`');
-    expect(chat.messages[0].content).toContain('Computer Use state');
-    expect(chat.messages[0].content).toContain(`[image: ${dataUrl}]`);
+    expect(chat.messages[0].role).toBe('tool');
+    expect(getMessageText(chat.messages[0])).toContain('• Called tool `computer-use / get_app_state`');
+    expect(getMessageText(chat.messages[0])).toContain('Computer Use state');
+    expect(getMessageText(chat.messages[0])).toContain(`[image: ${dataUrl}]`);
   });
 
   it('maps raw image data parts in tool results into previewable screenshots', () => {
@@ -1150,11 +1151,10 @@ describe('chatMapping', () => {
     );
 
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('tool');
-    expect(chat.messages[0].content).toContain('• Called tool `computer-use / get_app_state`');
-    expect(chat.messages[0].content).toContain('Computer Use state');
-    expect(chat.messages[0].content).toContain(
+    expect(chat.messages[0].role).toBe('tool');
+    expect(getMessageText(chat.messages[0])).toContain('• Called tool `computer-use / get_app_state`');
+    expect(getMessageText(chat.messages[0])).toContain('Computer Use state');
+    expect(getMessageText(chat.messages[0])).toContain(
       `[image: data:image/png;base64,${base64Image}]`
     );
   });
@@ -1183,10 +1183,9 @@ describe('chatMapping', () => {
     );
 
     expect(chat.messages).toHaveLength(1);
-    expect(chat.messages[0].role).toBe('system');
-    expect(chat.messages[0].systemKind).toBe('tool');
-    expect(chat.messages[0].content).toContain('• Viewed image bridge-pairing-qr.png');
-    expect(chat.messages[0].content).toContain('/tmp/bridge-pairing-qr.png');
+    expect(chat.messages[0].role).toBe('tool');
+    expect(getMessageText(chat.messages[0])).toContain('• Viewed image bridge-pairing-qr.png');
+    expect(getMessageText(chat.messages[0])).toContain('/tmp/bridge-pairing-qr.png');
   });
 
   it('covers primitive readers, preview truncation, and malformed raw payloads', () => {
@@ -1299,8 +1298,8 @@ describe('chatMapping', () => {
       id: 'thr_collab_matrix',
       turns: [{ items: [{ type: 'collabToolCall', tool, status }] }],
     }));
-    expect(chat.messages[0].content).toContain(expected);
-    expect(chat.messages[0].subAgentMeta).toEqual(expect.objectContaining({ tool }));
+    expect(getMessageText(chat.messages[0])).toContain(expected);
+    expect(getSubAgentMeta(chat.messages[0])).toEqual(expect.objectContaining({ tool }));
   });
 
   it('maps web actions and file changes with empty and multiple targets', () => {

@@ -10,6 +10,12 @@ import type {
   TurnPlanStep,
 } from './types';
 import { renderAgUiCustomContent } from './agUi';
+import {
+  COMPACTION_ACTIVITY_TYPE,
+  createActivityMessage,
+  getMessageText,
+  SUBAGENT_ACTIVITY_TYPE,
+} from './messages';
 
 export type RawThreadStatus =
   | { type?: string }
@@ -756,7 +762,7 @@ export function mapChat(raw: RawThread): Chat {
 
   const lastPreview =
     messages.length > 0
-      ? toPreview(messages[messages.length - 1].content)
+      ? toPreview(getMessageText(messages[messages.length - 1]))
       : summary.lastMessagePreview;
 
   return {
@@ -940,27 +946,29 @@ function mapMessages(raw: RawThread, fallbackCreatedAt: string): ChatMessage[] {
           raw.acpSnapshot?.session.agentId
         );
         if (taskSubagent) {
-          return [{
-            id: `subagent:${tool.id}`,
-            role: 'system' as const,
-            content: [
+          const text = [
               taskSubagent.state === 'completed'
                 ? '• Spawned sub-agent'
                 : '• Spawning sub-agent',
               `  Thread: ${taskSubagent.threadId}`,
               `  Status: ${taskSubagent.state}`,
               taskSubagent.result ? `  Result: ${taskSubagent.result}` : null,
-            ].filter(Boolean).join('\n'),
-            systemKind: 'subAgent' as const,
-            subAgentMeta: {
+            ].filter(Boolean).join('\n');
+          return [createActivityMessage(
+            `subagent:${tool.id}`,
+            SUBAGENT_ACTIVITY_TYPE,
+            {
+              text,
+              subAgent: {
               tool: 'spawnAgent',
               senderThreadId: raw.id,
               receiverThreadIds: [taskSubagent.threadId],
               agentStatus: taskSubagent.state,
               navigable: false,
             },
-            createdAt: new Date(baseTs + index * 1000).toISOString(),
-          }];
+            },
+            new Date(baseTs + index * 1000).toISOString()
+          )];
         }
         const structured = renderAgUiCustomContent({
           content: tool.structuredContent,
@@ -969,9 +977,9 @@ function mapMessages(raw: RawThread, fallbackCreatedAt: string): ChatMessage[] {
         const details = [tool.title || tool.kind, tool.content, structured].filter(Boolean).join('\n');
         return [{
           id: `tool:${tool.id}`,
-          role: 'system' as const,
+          role: 'tool' as const,
+          toolCallId: tool.id,
           content: `${details || tool.id}${tool.truncated ? '\n[tool content truncated]' : ''}`,
-          systemKind: 'tool' as const,
           createdAt: new Date(baseTs + index * 1000).toISOString(),
         }];
       }
@@ -985,14 +993,17 @@ function mapMessages(raw: RawThread, fallbackCreatedAt: string): ChatMessage[] {
       if (!content) {
         return [];
       }
-      return [{
+      const common = {
         id: message.id,
-        role: message.role === 'agent' ? 'assistant' as const : message.role === 'user' ? 'user' as const : 'system' as const,
         content: `${content}${message.truncated ? '\n[message content truncated]' : ''}`,
         parts,
-        systemKind: message.role === 'thought' ? 'reasoning' as const : undefined,
         createdAt: new Date(baseTs + index * 1000).toISOString(),
-      }];
+      };
+      return [message.role === 'agent'
+        ? { ...common, role: 'assistant' as const }
+        : message.role === 'user'
+          ? { ...common, role: 'user' as const }
+          : { ...common, role: 'reasoning' as const }];
     });
     const collections = [
       ['messages', raw.acpSnapshot.messageCollection],
@@ -1068,22 +1079,28 @@ function mapMessages(raw: RawThread, fallbackCreatedAt: string): ChatMessage[] {
 
       const toolLikeMessage = toToolLikeMessage(itemRecord);
       if (toolLikeMessage) {
-        const systemKind =
-          normalizedItemType === 'collabtoolcall'
-            ? 'subAgent'
-            : normalizedItemType === 'reasoning'
-              ? 'reasoning'
-              : normalizedItemType === 'contextcompaction'
-                ? 'compaction'
-              : 'tool';
-        messages.push({
-          id: readString(itemRecord.id) ?? generateLocalId(),
-          role: 'system',
-          content: toolLikeMessage,
-          systemKind,
-          subAgentMeta: systemKind === 'subAgent' ? toSubAgentMeta(itemRecord) : undefined,
-          createdAt: new Date(baseTs + messages.length * 1000).toISOString(),
-        });
+        const id = readString(itemRecord.id) ?? generateLocalId();
+        const createdAt = new Date(baseTs + messages.length * 1000).toISOString();
+        if (normalizedItemType === 'reasoning') {
+          messages.push({ id, role: 'reasoning', content: toolLikeMessage, createdAt });
+        } else if (normalizedItemType === 'collabtoolcall') {
+          messages.push(createActivityMessage(id, SUBAGENT_ACTIVITY_TYPE, {
+            text: toolLikeMessage,
+            subAgent: toSubAgentMeta(itemRecord),
+          }, createdAt));
+        } else if (normalizedItemType === 'contextcompaction') {
+          messages.push(createActivityMessage(id, COMPACTION_ACTIVITY_TYPE, {
+            text: toolLikeMessage,
+          }, createdAt));
+        } else {
+          messages.push({
+            id,
+            role: 'tool',
+            toolCallId: readString(itemRecord.callId) ?? readString(itemRecord.call_id) ?? id,
+            content: toolLikeMessage,
+            createdAt,
+          });
+        }
       }
     }
   }

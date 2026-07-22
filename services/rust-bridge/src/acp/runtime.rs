@@ -3292,7 +3292,7 @@ mod tests {
             .expect("loaded session");
         let snapshot = session.snapshot().await;
         assert_eq!(snapshot.messages.len(), 1);
-        assert_eq!(snapshot.messages[0].id, "second");
+        assert_eq!(snapshot.messages[0].id, "second::agent");
 
         assert!(connection
             .load_session(LoadSessionRequest::new(session_id.clone(), "/tmp"))
@@ -3300,7 +3300,7 @@ mod tests {
             .is_err());
         let snapshot = session.snapshot().await;
         assert_eq!(snapshot.messages.len(), 1);
-        assert_eq!(snapshot.messages[0].id, "second");
+        assert_eq!(snapshot.messages[0].id, "second::agent");
         assert!(!snapshot.history_reconstruction);
         connection.shutdown().await.expect("shutdown");
     }
@@ -3887,13 +3887,13 @@ mod tests {
             .await
             .messages
             .iter()
-            .any(|message| message.id == "one"));
+            .any(|message| message.id == "one::agent"));
         assert!(second_session
             .snapshot()
             .await
             .messages
             .iter()
-            .any(|message| message.id == "two"));
+            .any(|message| message.id == "two::agent"));
         connection
             .resume_session(ResumeSessionRequest::new("late-session", "/tmp"))
             .await
@@ -3907,7 +3907,7 @@ mod tests {
             .await
             .messages
             .iter()
-            .any(|message| message.id == "late"));
+            .any(|message| message.id == "late::agent"));
         connection.shutdown().await.expect("connection shuts down");
     }
 

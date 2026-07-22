@@ -594,7 +594,7 @@ describe('MainScreen shell behavior', () => {
   it.each([
     { stage: 'create', method: 'createChatIdempotent' },
     { stage: 'first send', method: 'sendChatMessageIdempotent' },
-  ])('restores the new-thread draft when $stage fails', async ({ method }) => {
+  ])('restores the new-thread draft when $stage fails', async ({ stage, method }) => {
     const api = createApi();
     (api[method as keyof HostBridgeApiClient] as jest.Mock).mockRejectedValueOnce(
       new Error(`${method} failed`)
@@ -607,6 +607,9 @@ describe('MainScreen shell behavior', () => {
 
     expect(messageInput(root).props.value).toBe('Keep this draft');
     expect(hasText(root, `${method} failed`)).toBe(true);
+    if (stage === 'create') {
+      expect(textCount(root, 'Keep this draft')).toBe(0);
+    }
     act(() => tree.unmount());
   });
 

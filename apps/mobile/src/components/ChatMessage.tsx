@@ -18,6 +18,13 @@ import Markdown, { type RenderRules } from 'react-native-markdown-display';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { ChatMessage as ApiChatMessage, ChatMessagePart } from '../api/types';
+import {
+  COMPACTION_ACTIVITY_TYPE,
+  getMessageText,
+  getSubAgentMeta,
+  getToolCallDisplayLines,
+  SUBAGENT_ACTIVITY_TYPE,
+} from '../api/messages';
 import { extractLocalPreviewUrls } from '../browserPreview';
 import { useAppTheme, type AppTheme } from '../theme';
 import { controlAccessibilityState, decorativeAccessibilityProps } from '../accessibility';
@@ -104,18 +111,19 @@ function ChatMessageComponent({
   const [expandedReasoningEntries, setExpandedReasoningEntries] = useState<
     Record<string, boolean>
   >({});
+  const messageText = getMessageText(message);
   const messageBlocks = useMemo(
     () => message.parts?.length
       ? message.parts.flatMap((part) => messagePartToBlocks(part, bridgeUrl, bridgeToken))
-      : parseMessageBlocks(message.content, bridgeUrl, bridgeToken),
-    [bridgeToken, bridgeUrl, message.content, message.parts]
+      : parseMessageBlocks(messageText, bridgeUrl, bridgeToken),
+    [bridgeToken, bridgeUrl, message.parts, messageText]
   );
   const localPreviewUrls = useMemo(
     () =>
-      message.role === 'assistant' || message.role === 'system'
-        ? extractLocalPreviewUrls(message.content)
+      message.role === 'assistant' || message.role === 'system' || message.role === 'developer'
+        ? extractLocalPreviewUrls(messageText)
         : [],
-    [message.content, message.role]
+    [message.role, messageText]
   );
 
   const renderedMessage = isUser ? (
@@ -170,7 +178,7 @@ function ChatMessageComponent({
     return renderedMessage;
   }
 
-  if (message.role === 'assistant') {
+  if (message.role === 'assistant' || message.role === 'developer' || message.role === 'system') {
     return (
       <View style={[styles.messageWrapper, styles.messageWrapperAssistant]}>
         <View style={styles.assistantContent}>
@@ -241,8 +249,10 @@ function ChatMessageComponent({
   }
 
   const timelineEntries =
-    message.role === 'system' ? parseTimelineEntries(message.content) : null;
-  if (message.role === 'system' && message.systemKind === 'compaction') {
+    message.role === 'tool' || message.role === 'reasoning' || message.role === 'activity'
+      ? parseTimelineEntries(messageText)
+      : null;
+  if (message.role === 'activity' && message.activityType === COMPACTION_ACTIVITY_TYPE) {
     return (
       <View
         style={[
@@ -255,7 +265,7 @@ function ChatMessageComponent({
           <View style={styles.compactionLine} />
           <View style={styles.compactionBadge}>
             <Text style={styles.compactionText}>
-              {formatCompactionLabel(message.content)}
+              {formatCompactionLabel(messageText)}
             </Text>
           </View>
           <View style={styles.compactionLine} />
@@ -263,11 +273,11 @@ function ChatMessageComponent({
       </View>
     );
   }
-  if (message.role === 'system' && message.systemKind === 'reasoning') {
+  if (message.role === 'reasoning') {
     const reasoningEntries =
       timelineEntries && timelineEntries.length > 0
         ? timelineEntries
-        : [{ title: 'Reasoning', details: [message.content] }];
+        : [{ title: 'Reasoning', details: [messageText] }];
 
     return (
       <View style={[styles.messageWrapper, styles.messageWrapperAssistant]}>
@@ -350,15 +360,16 @@ function ChatMessageComponent({
       </View>
     );
   }
-  if (message.role === 'system' && message.systemKind === 'subAgent') {
+  if (message.role === 'activity' && message.activityType === SUBAGENT_ACTIVITY_TYPE) {
     const subAgentEntries =
       timelineEntries && timelineEntries.length > 0
         ? timelineEntries
-        : [{ title: message.content, details: [] }];
-    const targetThreadId = message.subAgentMeta?.receiverThreadIds?.[0]?.trim() ?? '';
+        : [{ title: messageText, details: [] }];
+      const subAgentMeta = getSubAgentMeta(message);
+      const targetThreadId = subAgentMeta?.receiverThreadIds?.[0]?.trim() ?? '';
     const canOpenThread = Boolean(
       targetThreadId &&
-      message.subAgentMeta?.navigable !== false &&
+      subAgentMeta?.navigable !== false &&
       onOpenSubAgentThread
     );
 
@@ -539,7 +550,7 @@ function ChatMessageComponent({
   return (
     <View style={[styles.messageWrapper, styles.messageWrapperAssistant]}>
       <Markdown style={markdownStyles} rules={markdownRules}>
-        {message.content || '\u258D'}
+        {messageText || '\u258D'}
       </Markdown>
       {localPreviewUrls.length > 0 && onOpenLocalPreview ? (
         <View style={styles.localPreviewLinkList}>
@@ -580,9 +591,10 @@ function areChatMessagePropsEqual(
   return (
     previous.id === next.id &&
     previous.role === next.role &&
-    previous.content === next.content &&
+    JSON.stringify(previous.content) === JSON.stringify(next.content) &&
     previous.createdAt === next.createdAt &&
-    previous.systemKind === next.systemKind &&
+    (previous.role !== 'activity' || next.role !== 'activity' ||
+      previous.activityType === next.activityType) &&
     prevProps.bridgeUrl === nextProps.bridgeUrl &&
     prevProps.bridgeToken === nextProps.bridgeToken &&
     prevProps.onOpenLocalPreview === nextProps.onOpenLocalPreview &&
@@ -618,7 +630,19 @@ export const ToolActivityGroup = memo(function ToolActivityGroupComponent({
   const entries = useMemo(() => {
     const flattened: ToolGroupEntry[] = [];
     for (const message of messages) {
-      const parsed = parseTimelineEntries(message.content);
+      const toolCallLines = getToolCallDisplayLines(message);
+      if (toolCallLines.length > 0) {
+        toolCallLines.forEach((line, index) => {
+          const parsed = parseTimelineEntries(line)?.[0];
+          flattened.push({
+            id: `${message.id}-tool-call-${String(index)}`,
+            title: parsed?.title ?? line,
+            details: parsed?.details ?? [],
+          });
+        });
+        continue;
+      }
+      const parsed = parseTimelineEntries(getMessageText(message));
       if (parsed && parsed.length > 0) {
         parsed.forEach((entry, index) => {
           flattened.push({
@@ -632,7 +656,7 @@ export const ToolActivityGroup = memo(function ToolActivityGroupComponent({
 
       flattened.push({
         id: message.id,
-        title: message.content.trim(),
+        title: getMessageText(message).trim(),
         details: [],
       });
     }

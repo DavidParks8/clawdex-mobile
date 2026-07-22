@@ -65,6 +65,7 @@ import type {
   FileSystemListRequest,
   FileSystemListResponse,
 } from './types';
+import { getMessageText } from './messages';
 import {
   isRpcRequestError,
   type HostBridgeWsClient,
@@ -2375,7 +2376,7 @@ function chatHasRecentUserMessage(
 
   const tail = chat.messages.slice(-tailSize);
   return tail.some(
-    (message) => message.role === 'user' && message.content.trim() === normalized
+    (message) => message.role === 'user' && getMessageText(message).trim() === normalized
   );
 }
 
@@ -2526,21 +2527,11 @@ function cloneChatSummaries(chats: ChatSummary[]): ChatSummary[] {
 }
 
 function cloneChat(chat: Chat): Chat {
+  const cloned = JSON.parse(JSON.stringify(chat)) as Chat;
   return {
-    ...chat,
-    messages: chat.messages.map((message) => ({
-      ...message,
-      subAgentMeta: message.subAgentMeta
-        ? {
-            ...message.subAgentMeta,
-            receiverThreadIds: message.subAgentMeta.receiverThreadIds
-              ? [...message.subAgentMeta.receiverThreadIds]
-              : undefined,
-          }
-        : undefined,
-    })),
-    latestPlan: cloneChatPlan(chat.latestPlan),
-    latestTurnPlan: cloneChatPlan(chat.latestTurnPlan),
+    ...cloned,
+    latestPlan: cloneChatPlan(cloned.latestPlan),
+    latestTurnPlan: cloneChatPlan(cloned.latestTurnPlan),
   };
 }
 

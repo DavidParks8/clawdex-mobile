@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../../api/types';
+import { createActivityMessage, SUBAGENT_ACTIVITY_TYPE } from '../../api/messages';
 import { trimInheritedParentMessages } from '../subAgentTranscript';
 
 function message(
@@ -6,18 +7,22 @@ function message(
   role: ChatMessage['role'],
   content: string,
   options?: {
-    systemKind?: ChatMessage['systemKind'];
-    subAgentMeta?: ChatMessage['subAgentMeta'];
+    systemKind?: 'subAgent';
+    subAgentMeta?: Parameters<typeof createActivityMessage>[2]['subAgent'];
   }
 ): ChatMessage {
+  if (options?.systemKind === 'subAgent') {
+    return createActivityMessage(id, SUBAGENT_ACTIVITY_TYPE, {
+      text: content,
+      ...(options.subAgentMeta ? { subAgent: options.subAgentMeta } : {}),
+    }, '2026-03-20T00:00:00.000Z');
+  }
   return {
     id,
-    role,
+    role: role === 'activity' || role === 'reasoning' || role === 'tool' ? 'system' : role,
     content,
-    systemKind: options?.systemKind,
-    subAgentMeta: options?.subAgentMeta,
     createdAt: '2026-03-20T00:00:00.000Z',
-  };
+  } as ChatMessage;
 }
 
 describe('trimInheritedParentMessages', () => {

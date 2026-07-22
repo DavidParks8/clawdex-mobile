@@ -203,7 +203,11 @@ impl AcpSession {
     ) -> String {
         let mut state = self.inner.lock().await;
         if let Some(id) = supplied {
-            return id;
+            return match role {
+                MessageRole::User => id,
+                MessageRole::Agent => format!("{id}::agent"),
+                MessageRole::Thought => format!("{id}::thought"),
+            };
         }
         let key = (generation, role);
         if let Some(id) = state.message_ids.get(&key) {
@@ -1049,7 +1053,13 @@ mod tests {
             session
                 .message_id(MessageRole::Agent, Some("supplied".to_string()))
                 .await,
-            "supplied"
+            "supplied::agent"
+        );
+        assert_eq!(
+            session
+                .message_id(MessageRole::Thought, Some("supplied".to_string()))
+                .await,
+            "supplied::thought"
         );
         let generated = session.message_id(MessageRole::Thought, None).await;
         assert_eq!(generated, "thread:1:Thought");
@@ -1133,7 +1143,7 @@ mod tests {
             .register("agent", SessionId::new("late"))
             .await
             .expect("session capacity");
-        assert_eq!(late.snapshot().await.messages[0].id, "late-message");
+        assert_eq!(late.snapshot().await.messages[0].id, "late-message::agent");
         let same = registry
             .register("agent", SessionId::new("late"))
             .await
@@ -1185,7 +1195,7 @@ mod tests {
             assert_eq!(
                 message.id,
                 format!(
-                    "message-{}",
+                    "message-{}::agent",
                     PENDING_NOTIFICATION_CAPACITY - snapshot.messages.len() + index
                 )
             );
@@ -1405,7 +1415,7 @@ mod tests {
                 .iter()
                 .map(|message| message.id.as_str())
                 .collect::<Vec<_>>(),
-            ["during-eviction", "during-eviction-2"]
+            ["during-eviction::agent", "during-eviction-2::agent"]
         );
         assert_eq!(registry.inner.lock().await.pending_notification_count, 0);
 
@@ -1740,7 +1750,7 @@ mod tests {
             .iter()
             .map(|message| message.id.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(ids.first(), Some(&"a"));
+        assert_eq!(ids.first(), Some(&"a::agent"));
         assert_eq!(ids.len(), 33);
         assert_eq!(ids.iter().filter(|id| id.starts_with("b-")).count(), 32);
     }
@@ -1801,7 +1811,7 @@ mod tests {
                 ..
             } = event
             {
-                if message_id == "old-notification" {
+                if message_id == "old-notification::agent" {
                     correlated = Some((run_id, source_turn_id, generation));
                 }
             }
@@ -1855,7 +1865,7 @@ mod tests {
                 ..
             } = event
             {
-                if message_id == "new-notification" {
+                if message_id == "new-notification::agent" {
                     correlated = Some((run_id, source_turn_id, generation));
                 }
             }
@@ -2038,7 +2048,7 @@ mod tests {
             session
                 .message_id(MessageRole::Agent, Some("supplied".into()))
                 .await,
-            "supplied"
+            "supplied::agent"
         );
         let generated = session.message_id(MessageRole::Agent, None).await;
         assert_eq!(generated, "thread:history:Agent");

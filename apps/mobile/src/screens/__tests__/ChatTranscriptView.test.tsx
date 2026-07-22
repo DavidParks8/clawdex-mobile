@@ -2,6 +2,7 @@ import { FlatList, Keyboard, Platform, Pressable } from 'react-native';
 import renderer, { act, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 
 import type { Chat } from '../../api/types';
+import { createAgUiThreadMessageState } from '../../api/agUiMessages';
 import { AppThemeProvider, createAppTheme } from '../../theme';
 import { ChatTranscriptView, type ChatTranscriptViewProps } from '../ChatTranscriptView';
 
@@ -396,7 +397,7 @@ describe('ChatTranscriptView continuation', () => {
       { onScrollInteractionStart: jest.fn() },
       { autoScrollStateRef: { current: { shouldStickToBottom: true, isUserInteracting: false, isMomentumScrolling: false } } },
       { bottomInset: 8 },
-      { liveAssistantMessages: [] },
+      { liveMessageState: createAgUiThreadMessageState() },
       { onOpenSubAgentThread: jest.fn() },
       { continuationState: { loading: false, error: null, exhausted: false, unavailableCount: 0 } },
       { onLoadEarlier: jest.fn() },
@@ -413,7 +414,7 @@ describe('ChatTranscriptView continuation', () => {
     const onInlineOptionSelect = jest.fn();
     const messages: Chat['messages'] = [
       {
-        id: 'tool', role: 'system', systemKind: 'tool', content: '• Ran tests',
+        id: 'tool', role: 'tool', toolCallId: 'tool', content: '• Ran tests',
         createdAt: '2026-07-20T00:00:00.000Z',
       },
       {

@@ -26,6 +26,7 @@ import type {
   TurnPlanStep,
   ChatMessage as ChatTranscriptMessage,
 } from '../api/types';
+import { getMessageText } from '../api/messages';
 import type { ActivityTone } from '../components/ActivityBar';
 
 export interface ActivityState {
@@ -948,11 +949,12 @@ export function findInlineChoiceSet(messages: ChatTranscriptMessage[]): {
       continue;
     }
 
-    if (message.content.length > 1200) {
+    const messageText = getMessageText(message);
+    if (messageText.length > 1200) {
       continue;
     }
 
-    const parsed = parseInlineOptionsFromQuestionText(message.content);
+    const parsed = parseInlineOptionsFromQuestionText(messageText);
     if (!parsed.options || parsed.options.length < 2 || parsed.options.length > 5) {
       continue;
     }
@@ -1265,14 +1267,14 @@ export function reconcileChatWithPendingOptimisticMessages(
 
   const userMessages = chat.messages.filter((message) => message.role === 'user');
   const remainingPendingMessages = pendingMessages.filter((entry) => {
-    const pendingContent = normalizeChatMessageMatchContent(entry.message.content);
+    const pendingContent = normalizeChatMessageMatchContent(getMessageText(entry.message));
     const matchedUserMessage = userMessages[entry.userOrdinal - 1];
 
     if (!matchedUserMessage) {
       return true;
     }
 
-    return normalizeChatMessageMatchContent(matchedUserMessage.content) !== pendingContent;
+    return normalizeChatMessageMatchContent(getMessageText(matchedUserMessage)) !== pendingContent;
   });
 
   if (remainingPendingMessages.length === 0) {
@@ -1287,7 +1289,7 @@ export function reconcileChatWithPendingOptimisticMessages(
     chat: {
       ...chat,
       lastMessagePreview:
-        normalizeChatMessageMatchContent(lastPendingMessage?.content ?? '').slice(0, 120) ||
+        normalizeChatMessageMatchContent(lastPendingMessage ? getMessageText(lastPendingMessage) : '').slice(0, 120) ||
         chat.lastMessagePreview,
       messages: [
         ...chat.messages,
@@ -2055,7 +2057,7 @@ export function shouldAutoEnablePlanModeFromChat(chat: Chat): boolean {
     return false;
   }
 
-  const normalized = latestAssistantMessage.content.toLowerCase();
+  const normalized = getMessageText(latestAssistantMessage).toLowerCase();
   return (
     normalized.includes('request_user_input is unavailable in default mode') ||
     (normalized.includes('request_user_input') &&
@@ -2694,16 +2696,16 @@ export function didAssistantMessageProgress(previous: Chat | null, next: Chat): 
   }
 
   if (!previousLatestAssistant) {
-    return nextLatestAssistant.content.trim().length > 0;
+    return getMessageText(nextLatestAssistant).trim().length > 0;
   }
 
   if (nextLatestAssistant.id === previousLatestAssistant.id) {
-    return nextLatestAssistant.content.length > previousLatestAssistant.content.length;
+    return getMessageText(nextLatestAssistant).length > getMessageText(previousLatestAssistant).length;
   }
 
   return (
     next.messages.length > previous.messages.length &&
-    nextLatestAssistant.content.trim().length > 0
+    getMessageText(nextLatestAssistant).trim().length > 0
   );
 }
 

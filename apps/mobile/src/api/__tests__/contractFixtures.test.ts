@@ -7,6 +7,7 @@ import {
   updateAgUiLiveAssistantMessages,
 } from '../agUi';
 import { HostBridgeWsClient } from '../ws';
+import { getMessageText } from '../messages';
 import { toPendingApproval, toPendingUserInputRequest } from '../../screens/mainScreenHelpers';
 
 interface ContractManifest {
@@ -117,16 +118,18 @@ describe('bridge RPC contract fixtures', () => {
       }),
       {} as AgUiLiveAssistantMessages
     );
-    expect(toolState.thread).toHaveLength(1);
-    expect(toolState.thread[0]).toMatchObject({
-      messageId: 'tool:tool-revision',
-      terminal: true,
-      toolText: 'second!',
-      structuredRevision: 'sha256:structured-two',
+    const toolMessages = toolState.thread?.messages ?? [];
+    const toolResult = toolMessages.find((message) => message.role === 'tool');
+    expect(toolMessages).toHaveLength(2);
+    expect(toolResult).toMatchObject({
+      role: 'tool',
+      toolCallId: 'tool-revision',
     });
-    expect(toolState.thread[0]?.text).toContain('terminal-2');
-    expect(toolState.thread[0]?.text).not.toContain('firstsecond');
-    expect(toolState.thread[0]?.text).not.toContain('terminal-1');
+    expect(toolState.thread?.terminalMessageIds).toContain('tool-call:tool-revision');
+    expect(toolState.thread?.structuredRevisionByCallId['tool-revision']).toBe('sha256:structured-two');
+    expect(getMessageText(toolResult!)).toContain('terminal-2');
+    expect(getMessageText(toolResult!)).not.toContain('firstsecond');
+    expect(getMessageText(toolResult!)).not.toContain('terminal-1');
     expect(manifest.fixtures.overloadError).toMatchObject({
       error: { code: -32005, data: { retryable: true } },
     });

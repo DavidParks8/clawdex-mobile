@@ -1,6 +1,12 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { MessageSchema } from '@ag-ui/core';
 
 import type { Chat, ChatMessage, ChatMessagePart } from './api/types';
+import {
+  COMPACTION_ACTIVITY_TYPE,
+  createActivityMessage,
+  SUBAGENT_ACTIVITY_TYPE,
+} from './api/messages';
 
 export const CHAT_SNAPSHOT_CACHE_VERSION = 1;
 export const CHAT_SNAPSHOT_CACHE_MAX_ENTRIES = 20;
@@ -196,8 +202,9 @@ function normalizeCacheEntry(value: unknown): ChatSnapshotCacheEntry | null {
     return null;
   }
   const entry = value as Partial<ChatSnapshotCacheEntry>;
+  const migratedChat = migrateLegacyChat(entry.chat);
   if (
-    !isChat(entry.chat) ||
+    !isChat(migratedChat) ||
     typeof entry.cachedAt !== 'string' ||
     !Number.isFinite(Date.parse(entry.cachedAt)) ||
     typeof entry.lastAccessedAt !== 'string' ||
@@ -206,9 +213,23 @@ function normalizeCacheEntry(value: unknown): ChatSnapshotCacheEntry | null {
     return null;
   }
   return {
-    chat: cloneChat(entry.chat),
+    chat: cloneChat(migratedChat),
     cachedAt: entry.cachedAt,
     lastAccessedAt: entry.lastAccessedAt,
+  };
+}
+
+function migrateLegacyChat(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  const chat = value as Record<string, unknown>;
+  if (!Array.isArray(chat.messages)) return value;
+  return {
+    ...chat,
+    messages: chat.messages.map((message) =>
+      message && typeof message === 'object'
+        ? migrateLegacyMessage(message as Record<string, unknown>)
+        : message
+    ),
   };
 }
 
@@ -235,15 +256,41 @@ function isChatMessage(value: unknown): value is ChatMessage {
   if (!value || typeof value !== 'object') {
     return false;
   }
-  const message = value as Partial<ChatMessage>;
-  return (
-    typeof message.id === 'string' &&
-    (message.role === 'user' || message.role === 'assistant' || message.role === 'system') &&
-    typeof message.content === 'string' &&
+  const message = value as Record<string, unknown>;
+  return MessageSchema.safeParse(migrateLegacyMessage(message)).success &&
     typeof message.createdAt === 'string' &&
     (message.parts === undefined ||
-      (Array.isArray(message.parts) && message.parts.every(isChatMessagePart)))
-  );
+      (Array.isArray(message.parts) && message.parts.every(isChatMessagePart)));
+}
+
+function migrateLegacyMessage(value: Record<string, unknown>): unknown {
+  const systemKind = typeof value.systemKind === 'string' ? value.systemKind : null;
+  const text = typeof value.content === 'string' ? value.content : '';
+  if (systemKind === 'reasoning') {
+    return { ...value, role: 'reasoning', content: text };
+  }
+  if (systemKind === 'tool') {
+    return {
+      ...value,
+      role: 'tool',
+      toolCallId: typeof value.toolCallId === 'string' ? value.toolCallId : String(value.id),
+      content: text,
+    };
+  }
+  if (systemKind === 'subAgent' || systemKind === 'compaction') {
+    return createActivityMessage(
+      String(value.id),
+      systemKind === 'subAgent' ? SUBAGENT_ACTIVITY_TYPE : COMPACTION_ACTIVITY_TYPE,
+      {
+        text,
+        ...(systemKind === 'subAgent' && value.subAgentMeta && typeof value.subAgentMeta === 'object'
+          ? { subAgent: value.subAgentMeta as Record<string, unknown> }
+          : {}),
+      },
+      String(value.createdAt)
+    );
+  }
+  return value;
 }
 
 function isChatMessagePart(value: unknown): value is ChatMessagePart {

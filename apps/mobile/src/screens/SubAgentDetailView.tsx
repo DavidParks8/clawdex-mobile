@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Chat, RunEvent } from '../api/types';
 import type { AutoScrollState, ThreadRuntimeSnapshot } from './mainScreenHelpers';
 import type { AgentThreadDisplayState } from './agentThreadDisplay';
-import type { LiveAssistantMessage } from './controllers/transcriptProjectionController';
+import type { AgUiThreadMessageState } from '../api/agUiMessages';
 import type { TranscriptDisplayItem } from './transcriptMessages';
 import { ChatTranscriptView } from './ChatTranscriptView';
 import { useAppTheme, type AppTheme } from '../theme';
@@ -30,7 +30,7 @@ interface SubAgentDetailViewProps {
   chat: Chat | null;
   parentChat: Chat | null;
   runtime: ThreadRuntimeSnapshot | null;
-  liveAssistantMessages: readonly LiveAssistantMessage[] | null;
+  liveMessageState: AgUiThreadMessageState | null;
   display: AgentThreadDisplayState | null;
   title: string;
   role?: string | null;
@@ -51,7 +51,7 @@ export function SubAgentDetailView({
   chat,
   parentChat,
   runtime,
-  liveAssistantMessages,
+  liveMessageState,
   display,
   title,
   role,
@@ -76,13 +76,23 @@ export function SubAgentDetailView({
   });
   const latestCommand: RunEvent | null =
     runtime?.latestCommand ?? runtime?.activeCommands?.at(-1) ?? null;
-  const resolvedLiveAssistantMessages =
-    liveAssistantMessages ??
+  const resolvedLiveMessageState =
+    liveMessageState ??
     (runtime?.streamingText?.trim()
-      ? [{
-          messageId: `live-assistant-${chat?.id ?? 'sub-agent'}`,
-          text: runtime.streamingText,
-        }]
+      ? {
+          messages: [{
+            id: `live-assistant-${chat?.id ?? 'sub-agent'}`,
+            role: 'assistant' as const,
+            content: runtime.streamingText,
+            createdAt: new Date().toISOString(),
+          }],
+          authoritativeSnapshot: false,
+          runByMessageId: {}, terminalMessageIds: [], replacesMessageIdByMessageId: {},
+          toolCallMessageIdByCallId: {}, toolResultMessageIdByCallId: {},
+          toolTextRevisionByCallId: {}, structuredRevisionByCallId: {},
+          structuredTextByCallId: {}, chunkAssemblies: {}, state: null, steps: {}, rawEvents: [],
+          customMetadata: {}, customMetadataOrder: [],
+        }
       : null);
   const activityDetail = display?.detail ?? latestCommand?.detail ?? role?.trim() ?? null;
   const modalFocusRef = useModalAccessibilityFocus(visible);
@@ -174,7 +184,7 @@ export function SubAgentDetailView({
               onScrollInteractionStart={() => {}}
               autoScrollStateRef={autoScrollStateRef}
               bottomInset={0}
-              liveAssistantMessages={resolvedLiveAssistantMessages}
+              liveMessageState={resolvedLiveMessageState}
             />
           ) : (
             <View style={styles.loadingShell} accessibilityRole="progressbar" accessibilityLabel="Loading agent transcript">

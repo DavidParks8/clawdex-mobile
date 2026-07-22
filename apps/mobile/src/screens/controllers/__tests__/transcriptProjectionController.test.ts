@@ -1,4 +1,6 @@
 import type { Chat } from '../../../api/types';
+import { createAgUiThreadMessageState } from '../../../api/agUiMessages';
+import { createActivityMessage, SUBAGENT_ACTIVITY_TYPE } from '../../../api/messages';
 import { projectTranscript } from '../transcriptProjectionController';
 
 const chat: Chat = {
@@ -6,6 +8,18 @@ const chat: Chat = {
   statusUpdatedAt: '', lastMessagePreview: '', parentThreadId: 'parent',
   messages: [{ id: 'u', role: 'user', content: 'child prompt', createdAt: '' }],
 };
+
+function liveState(
+  messages: Chat['messages'],
+  options: { terminal?: string[]; replacements?: Record<string, string> } = {}
+) {
+  return {
+    ...createAgUiThreadMessageState(),
+    messages,
+    terminalMessageIds: options.terminal ?? [],
+    replacesMessageIdByMessageId: options.replacements ?? {},
+  };
+}
 
 describe('transcriptProjectionController', () => {
   it('projects inherited messages and a non-duplicate live assistant message', () => {
@@ -20,7 +34,9 @@ describe('transcriptProjectionController', () => {
       parentChat: parent,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [{ messageId: 'live', text: 'live answer' }],
+      liveMessageState: liveState([
+        { id: 'live', role: 'assistant', content: 'live answer', createdAt: 'now' },
+      ]),
       now: () => 'now',
     });
     expect(projection.messages.at(-1)).toMatchObject({
@@ -48,14 +64,14 @@ describe('transcriptProjectionController', () => {
       parentChat: null,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [
-        { messageId: 'reasoning', text: 'Thinking', role: 'system', systemKind: 'reasoning' },
-        { messageId: 'tool:read', text: 'Read file\ndone', role: 'system', systemKind: 'tool' },
-      ],
+      liveMessageState: liveState([
+        { id: 'reasoning', role: 'reasoning', content: 'Thinking', createdAt: 'now' },
+        { id: 'tool-result:read', role: 'tool', toolCallId: 'read', content: 'Read file\ndone', createdAt: 'now' },
+      ]),
     });
     expect(projection.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'reasoning', role: 'system', systemKind: 'reasoning' }),
-      expect.objectContaining({ id: 'tool:read', role: 'system', systemKind: 'tool' }),
+      expect.objectContaining({ id: 'reasoning', role: 'reasoning' }),
+      expect.objectContaining({ id: 'tool-result:read', role: 'tool', toolCallId: 'read' }),
     ]));
   });
 
@@ -65,29 +81,26 @@ describe('transcriptProjectionController', () => {
       parentChat: null,
       showToolCalls: false,
       threadStatuses: new Map([['child-thread', 'running']]),
-      liveAssistantMessages: [{
-        runId: 'run',
-        messageId: 'subagent:task-1',
-        text: '• Spawning sub-agent\n  Thread: child-thread\n  Status: running',
-        role: 'system',
-        systemKind: 'subAgent',
-        subAgentMeta: {
+      liveMessageState: liveState([createActivityMessage(
+        'subagent:task-1',
+        SUBAGENT_ACTIVITY_TYPE,
+        {
+          text: '• Spawning sub-agent\n  Thread: child-thread\n  Status: running',
+          subAgent: {
           tool: 'spawnAgent',
           senderThreadId: chat.id,
           receiverThreadIds: ['child-thread'],
           agentStatus: 'running',
           navigable: false,
+          },
         },
-      }],
+        'now'
+      )]),
     });
 
     expect(projection.messages.at(-1)).toMatchObject({
-      systemKind: 'subAgent',
-      subAgentMeta: {
-        receiverThreadIds: ['child-thread'],
-        agentStatus: 'running',
-        navigable: false,
-      },
+      role: 'activity',
+      activityType: SUBAGENT_ACTIVITY_TYPE,
     });
   });
 
@@ -100,18 +113,103 @@ describe('transcriptProjectionController', () => {
         { id: 'a', role: 'assistant' as const, content: 'answer', createdAt: '' },
       ],
     };
-    for (const liveAssistantMessage of [
-      { messageId: 'live', text: '  ' },
-      { messageId: 'a', text: 'answer' },
+    for (const liveMessage of [
+      { id: 'live', role: 'assistant' as const, content: '  ', createdAt: 'now' },
+      { id: 'a', role: 'assistant' as const, content: 'answer', createdAt: 'now' },
     ]) {
       expect(projectTranscript({
         chat: withAssistant,
         parentChat: null,
         showToolCalls: true,
         threadStatuses: new Map(),
-        liveAssistantMessages: [liveAssistantMessage],
+        liveMessageState: liveState([liveMessage]),
       }).messages).toHaveLength(2);
     }
+  });
+
+  it('collapses optimistic, live, and persisted copies across user and reasoning rows', () => {
+    const projection = projectTranscript({
+      chat: {
+        ...chat,
+        parentThreadId: undefined,
+        messages: [
+          { id: 'server-user', role: 'user', content: 'test', createdAt: 'server' },
+          { id: 'msg-local', role: 'user', content: 'test', createdAt: 'local' },
+          {
+            id: 'reasoning-1',
+            role: 'reasoning',
+            content: 'Got it. Ready when you are.',
+            createdAt: 'server',
+          },
+        ],
+      },
+      parentChat: null,
+      showToolCalls: true,
+      threadStatuses: new Map(),
+      liveMessageState: liveState([
+        { id: 'server-user', content: 'test', role: 'user', createdAt: 'live' },
+        {
+          id: 'reasoning-1',
+          content: 'Got it. Ready when you are.',
+          role: 'reasoning',
+          createdAt: 'live',
+        },
+      ], { terminal: ['reasoning-1'] }),
+    });
+
+    expect(projection.messages.filter((message) => message.role === 'user')).toEqual([
+      expect.objectContaining({ id: 'server-user', content: 'test' }),
+    ]);
+    expect(
+      projection.messages.filter((message) => message.role === 'reasoning')
+    ).toEqual([
+      expect.objectContaining({ id: 'reasoning-1', content: 'Got it. Ready when you are.' }),
+    ]);
+  });
+
+  it('preserves repeated identical user prompts from distinct turns', () => {
+    const projection = projectTranscript({
+      chat: {
+        ...chat,
+        parentThreadId: undefined,
+        messages: [
+          { id: 'user-1', role: 'user', content: 'continue', createdAt: 'one' },
+          { id: 'answer-1', role: 'assistant', content: 'First response', createdAt: 'two' },
+        ],
+      },
+      parentChat: null,
+      showToolCalls: true,
+      threadStatuses: new Map(),
+      liveMessageState: liveState([
+        { id: 'user-2', role: 'user', content: 'continue', createdAt: 'three' },
+      ]),
+    });
+
+    expect(projection.messages.filter((message) => message.role === 'user')).toHaveLength(2);
+    expect(projection.messages.at(-1)).toMatchObject({ id: 'user-2', content: 'continue' });
+  });
+
+  it('uses authoritative snapshot order when persistence is partial', () => {
+    const snapshot = liveState([
+      { id: 'user', role: 'user', content: 'Question', createdAt: 'one' },
+      { id: 'reason', role: 'reasoning', content: 'Thinking', createdAt: 'two' },
+      { id: 'answer', role: 'assistant', content: 'Answer', createdAt: 'three' },
+    ]);
+    snapshot.authoritativeSnapshot = true;
+    const projection = projectTranscript({
+      chat: {
+        ...chat,
+        parentThreadId: undefined,
+        messages: [{ id: 'answer', role: 'assistant', content: 'Answer', createdAt: 'persisted' }],
+      },
+      parentChat: null,
+      showToolCalls: true,
+      threadStatuses: new Map(),
+      liveMessageState: snapshot,
+    });
+
+    expect(projection.messages.map((message) => message.id)).toEqual(['user', 'reason', 'answer']);
+    expect(projection.messages.at(-1)?.createdAt).toBe('persisted');
   });
 
   it('replaces changing live text and suppresses it after persistence catches up', () => {
@@ -120,14 +218,14 @@ describe('transcriptProjectionController', () => {
       parentChat: null,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [{ messageId: 'live', text: 'Hello' }],
+      liveMessageState: liveState([{ id: 'live', role: 'assistant', content: 'Hello', createdAt: 'live' }]),
     });
     const second = projectTranscript({
       chat: { ...chat, parentThreadId: undefined },
       parentChat: null,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [{ messageId: 'live', text: 'Hello there' }],
+      liveMessageState: liveState([{ id: 'live', role: 'assistant', content: 'Hello there', createdAt: 'live' }]),
     });
     expect(first.messages.at(-1)?.content).toBe('Hello');
     expect(second.messages.at(-1)?.content).toBe('Hello there');
@@ -145,7 +243,7 @@ describe('transcriptProjectionController', () => {
       parentChat: null,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [{ messageId: 'live', text: 'Hello there' }],
+      liveMessageState: liveState([{ id: 'live', role: 'assistant', content: 'Hello there', createdAt: 'live' }]),
     });
     expect(persisted.messages.at(-1)?.id).toBe('live');
   });
@@ -163,15 +261,17 @@ describe('transcriptProjectionController', () => {
       parentChat: null,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [{
-        messageId: 'agent-alpha:run::item::assistant-1',
-        text: 'Hello there',
+      liveMessageState: liveState([{
+        id: 'agent-alpha:run::item::assistant-1',
+        role: 'assistant',
+        content: 'Hello there',
+        createdAt: 'live',
         parts: [
           { type: 'text', text: 'Hello ' },
           { type: 'image', url: 'https://example.test/image.png' },
           { type: 'text', text: 'there' },
         ],
-      }],
+      }]),
     });
 
     expect(projection.messages).toHaveLength(2);
@@ -200,11 +300,9 @@ describe('transcriptProjectionController', () => {
       parentChat: null,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [{
-        runId: 'run-1',
-        messageId: 'run-1::item::assistant-1',
-        text: 'Hello',
-      }],
+      liveMessageState: liveState([{
+        id: 'run-1::item::assistant-1', role: 'assistant', content: 'Hello', createdAt: 'live',
+      }]),
     });
 
     expect(projection.messages.at(-1)?.content).toBe('Hello there');
@@ -223,15 +321,12 @@ describe('transcriptProjectionController', () => {
       parentChat: null,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [
-        { runId: 'run-1', messageId: 'streamed', text: 'Stale' },
+      liveMessageState: liveState([
+        { id: 'streamed', role: 'assistant', content: 'Stale', createdAt: 'live' },
         {
-          runId: 'run-1',
-          messageId: 'final',
-          text: 'Corrected',
-          replacesMessageId: 'streamed',
+          id: 'final', role: 'assistant', content: 'Corrected', createdAt: 'live',
         },
-      ],
+      ], { replacements: { final: 'streamed' } }),
     });
 
     expect(projection.messages.map((message) => message.content)).toEqual([
@@ -246,10 +341,10 @@ describe('transcriptProjectionController', () => {
       parentChat: null,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [
-        { runId: 'run-1', messageId: 'first', text: 'First' },
-        { runId: 'run-1', messageId: 'second', text: 'Second' },
-      ],
+      liveMessageState: liveState([
+        { id: 'first', role: 'assistant', content: 'First', createdAt: 'live' },
+        { id: 'second', role: 'assistant', content: 'Second', createdAt: 'live' },
+      ]),
     });
 
     expect(projection.messages.map((message) => message.content)).toEqual([
@@ -272,12 +367,9 @@ describe('transcriptProjectionController', () => {
       parentChat: null,
       showToolCalls: true,
       threadStatuses: new Map(),
-      liveAssistantMessages: [{
-        runId: 'run-1',
-        messageId: 'answer',
-        text: 'Final stale suffix',
-        terminal: true,
-      }],
+      liveMessageState: liveState([{
+        id: 'answer', role: 'assistant', content: 'Final stale suffix', createdAt: 'live',
+      }], { terminal: ['answer'] }),
     });
 
     expect(projection.messages.at(-1)?.content).toBe('Final');

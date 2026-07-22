@@ -1,4 +1,5 @@
 import { SubmissionController, submissionScopeKey } from '../submissionController';
+import * as Crypto from 'expo-crypto';
 
 describe('submissionController', () => {
   it('supports its default id factory', () => {
@@ -6,6 +7,16 @@ describe('submissionController', () => {
       { scopeKey: 'scope', value: '', revision: 0 },
       { mentions: [], localImages: [] }
     ).id).toMatch(/^submission-/);
+  });
+
+  it('falls back when Expo Crypto randomUUID is unavailable', () => {
+    jest.spyOn(Crypto, 'randomUUID').mockImplementationOnce(() => {
+      throw new TypeError('randomUUID unavailable');
+    });
+    expect(new SubmissionController().begin(
+      { scopeKey: 'scope', value: 'web', revision: 0 },
+      { mentions: [], localImages: [] }
+    ).id).toMatch(/^submission-.+-1$/);
   });
 
   it('restores only the unchanged draft in the original profile and thread scope', () => {

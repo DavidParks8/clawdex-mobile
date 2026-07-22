@@ -1,5 +1,12 @@
 import type { ChatMessage } from '../../api/types';
 import {
+  COMPACTION_ACTIVITY_TYPE,
+  createActivityMessage,
+  getMessageText,
+  getSubAgentMeta,
+  SUBAGENT_ACTIVITY_TYPE,
+} from '../../api/messages';
+import {
   buildTranscriptDisplayItems,
   getVisibleTranscriptMessages,
   MAX_TOOL_MESSAGES_PER_TRANSCRIPT_GROUP,
@@ -11,15 +18,33 @@ function message(
   id: string,
   role: ChatMessage['role'],
   content: string,
-  extras?: Partial<ChatMessage>
+  extras?: {
+    systemKind?: 'tool' | 'reasoning' | 'subAgent' | 'compaction';
+    subAgentMeta?: Parameters<typeof createActivityMessage>[2]['subAgent'];
+  } & Record<string, unknown>
 ): ChatMessage {
+  const createdAt = '2026-03-19T00:00:00.000Z';
+  if (extras?.systemKind === 'tool') {
+    return { id, role: 'tool', toolCallId: id, content, createdAt };
+  }
+  if (extras?.systemKind === 'reasoning') {
+    return { id, role: 'reasoning', content, createdAt };
+  }
+  if (extras?.systemKind === 'subAgent') {
+    return createActivityMessage(id, SUBAGENT_ACTIVITY_TYPE, {
+      text: content,
+      ...(extras.subAgentMeta ? { subAgent: extras.subAgentMeta } : {}),
+    }, createdAt);
+  }
+  if (extras?.systemKind === 'compaction') {
+    return createActivityMessage(id, COMPACTION_ACTIVITY_TYPE, { text: content }, createdAt);
+  }
   return {
     id,
-    role,
+    role: role === 'activity' || role === 'reasoning' || role === 'tool' ? 'system' : role,
     content,
-    createdAt: '2026-03-19T00:00:00.000Z',
-    ...extras,
-  };
+    createdAt,
+  } as ChatMessage;
 }
 
 describe('getVisibleTranscriptMessages', () => {
@@ -154,8 +179,8 @@ describe('getVisibleTranscriptMessages', () => {
 
     const synced = syncVisibleSubAgentStatuses(messages, new Map([['child', 'complete']]));
 
-    expect(synced[0]?.content).toContain('Status: complete');
-    expect(synced[0]?.subAgentMeta?.agentStatus).toBe('complete');
+    expect(getMessageText(synced[0]!)).toContain('Status: complete');
+    expect(getSubAgentMeta(synced[0]!)?.agentStatus).toBe('complete');
   });
 
   it('hides internal protocol content and blank assistant messages', () => {
@@ -184,7 +209,7 @@ describe('getVisibleTranscriptMessages', () => {
     });
     const synced = syncVisibleSubAgentStatuses([message('a', 'assistant', 'before'), spawned], new Map([['child', 'running']]));
     expect(synced).not.toBe([message('a', 'assistant', 'before'), spawned]);
-    expect(synced[1].content).toBe('• Spawned sub-agent\n  Status: running');
+    expect(getMessageText(synced[1])).toBe('• Spawned sub-agent\n  Status: running');
     expect(syncVisibleSubAgentStatuses([synced[1]], new Map([['child', 'running']]))[0]).toBe(synced[1]);
     expect(syncVisibleSubAgentStatuses([spawned], new Map([['other', 'running']]))).toEqual([spawned]);
   });

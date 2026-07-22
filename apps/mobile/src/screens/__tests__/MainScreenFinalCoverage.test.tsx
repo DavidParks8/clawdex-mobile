@@ -5,6 +5,7 @@ import renderer, { act, type ReactTestInstance, type ReactTestRenderer } from 'r
 import type { HostBridgeApiClient } from '../../api/client';
 import type { BridgeCapabilities, Chat, ChatSummary } from '../../api/types';
 import type { HostBridgeWsClient } from '../../api/ws';
+import { createActivityMessage, SUBAGENT_ACTIVITY_TYPE } from '../../api/messages';
 import { AppThemeProvider, createAppTheme } from '../../theme';
 import { MainScreen, type MainScreenHandle } from '../MainScreen';
 
@@ -16,7 +17,12 @@ jest.mock('expo-file-system/legacy', () => ({
 }));
 jest.mock('react-native-markdown-display', () => 'Markdown');
 jest.mock('../../components/ChatMessage', () => ({
-  ChatMessage: ({ message }: { message: { content: string } }) => message.content,
+  ChatMessage: ({ message }: { message: { content: string | { text?: unknown } } }) =>
+    typeof message.content === 'string'
+      ? message.content
+      : typeof message.content.text === 'string'
+        ? message.content.text
+        : '',
   ToolActivityGroup: ({ events }: { events: unknown[] }) => `activities:${String(events.length)}`,
 }));
 jest.mock('../../components/LoadingGlyph', () => ({ LoadingGlyph: () => null }));
@@ -734,14 +740,13 @@ describe('MainScreen final branch coverage', () => {
       receiverThreadIds: ['child-one'],
       agentStatus: 'running' as const,
     };
-    const message = {
-      id: 'equality-message',
-      role: 'assistant' as const,
-      content: 'Equality answer',
-      createdAt: now,
-      systemKind: 'subAgent' as const,
-      subAgentMeta: meta,
-    };
+    const message = createActivityMessage(
+      'equality-message',
+      SUBAGENT_ACTIVITY_TYPE,
+      { text: 'Equality answer', subAgent: meta },
+      now
+    );
+    if (message.role !== 'activity') throw new Error('Expected activity message');
     const snapshots: Chat[] = [
       { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [message] },
       { ...baseChat, latestPlan: { ...plan, threadId: 'different-thread' }, latestTurnPlan: plan, messages: [message] },
@@ -753,17 +758,17 @@ describe('MainScreen final branch coverage', () => {
       { ...baseChat, latestPlan: null, latestTurnPlan: plan, messages: [message] },
       { ...baseChat, latestPlan: plan, latestTurnPlan: null, messages: [message] },
       { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, id: 'different-id' }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, role: 'user' }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, content: 'Different content' }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ id: message.id, role: 'user', content: 'Equality answer', createdAt: now }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, content: { ...message.content, text: 'Different content' } }] },
       { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, createdAt: `${now}-later` }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, systemKind: undefined }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, subAgentMeta: undefined }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, subAgentMeta: { ...meta, tool: 'other' } }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, subAgentMeta: { ...meta, prompt: 'Other prompt' } }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, subAgentMeta: { ...meta, senderThreadId: 'other' } }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, subAgentMeta: { ...meta, agentStatus: 'complete' } }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, subAgentMeta: { ...meta, receiverThreadIds: [] } }] },
-      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, subAgentMeta: { ...meta, receiverThreadIds: ['child-two'] } }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, activityType: 'other' }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, content: { ...message.content, subAgent: undefined } }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, content: { ...message.content, subAgent: { ...meta, tool: 'other' } } }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, content: { ...message.content, subAgent: { ...meta, prompt: 'Other prompt' } } }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, content: { ...message.content, subAgent: { ...meta, senderThreadId: 'other' } } }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, content: { ...message.content, subAgent: { ...meta, agentStatus: 'complete' } } }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, content: { ...message.content, subAgent: { ...meta, receiverThreadIds: [] } } }] },
+      { ...baseChat, latestPlan: plan, latestTurnPlan: plan, messages: [{ ...message, content: { ...message.content, subAgent: { ...meta, receiverThreadIds: ['child-two'] } } }] },
       { ...baseChat, status: 'running', messages: [
         { id: 'recent-user', role: 'user', content: 'Do not lose this', createdAt: new Date().toISOString() },
         message,

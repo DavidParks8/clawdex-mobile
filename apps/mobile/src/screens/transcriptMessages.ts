@@ -1,4 +1,11 @@
 import type { ChatMessage, ChatStatus } from '../api/types';
+import {
+  COMPACTION_ACTIVITY_TYPE,
+  getMessageText,
+  getSubAgentMeta,
+  getToolCallDisplayLines,
+  SUBAGENT_ACTIVITY_TYPE,
+} from '../api/messages';
 
 export interface ToolTranscriptGroup {
   kind: 'toolGroup';
@@ -22,13 +29,16 @@ export function getVisibleTranscriptMessages(
   showToolCalls: boolean
 ): ChatMessage[] {
   const filtered = messages.filter((msg) => {
-    const text = msg.content || '';
+    const text = getMessageText(msg);
+    const hasToolCalls = getToolCallDisplayLines(msg).length > 0;
     if (
       !showToolCalls &&
-      msg.role === 'system' &&
-      msg.systemKind !== 'subAgent' &&
-      msg.systemKind !== 'reasoning' &&
-      msg.systemKind !== 'compaction'
+      (msg.role === 'tool' ||
+      hasToolCalls ||
+        (msg.role === 'system' && isLegacyToolTimelineContent(text)) ||
+        (msg.role === 'activity' &&
+          msg.activityType !== SUBAGENT_ACTIVITY_TYPE &&
+          msg.activityType !== COMPACTION_ACTIVITY_TYPE))
     ) {
       return false;
     }
@@ -41,7 +51,7 @@ export function getVisibleTranscriptMessages(
     if (text.includes('You are operating in task worktree')) {
       return false;
     }
-    if (msg.role === 'assistant' && !text.trim()) {
+    if (msg.role === 'assistant' && !text.trim() && !hasToolCalls) {
       return false;
     }
     return true;
@@ -95,19 +105,13 @@ export function buildTranscriptDisplayItems(messages: ChatMessage[]): Transcript
 }
 
 function isToolTranscriptMessage(message: ChatMessage): boolean {
+  if (message.role === 'tool' || getToolCallDisplayLines(message).length > 0) {
+    return true;
+  }
   if (message.role !== 'system') {
     return false;
   }
-
-  if (message.systemKind === 'tool') {
-    return true;
-  }
-
-  if (message.systemKind) {
-    return false;
-  }
-
-  return isLegacyToolTimelineContent(message.content);
+  return isLegacyToolTimelineContent(getMessageText(message));
 }
 
 function isLegacyToolTimelineContent(content: string): boolean {
@@ -130,7 +134,7 @@ function buildTranscriptRenderKey(message: ChatMessage, userMessageOrdinal: numb
     return message.id;
   }
 
-  return `user-${String(userMessageOrdinal)}-${normalizeTranscriptKeyContent(message.content)}`;
+  return `user-${String(userMessageOrdinal)}-${normalizeTranscriptKeyContent(getMessageText(message))}`;
 }
 
 function normalizeTranscriptKeyContent(value: string): string {
@@ -168,11 +172,12 @@ function syncSubAgentMessageStatus(
   message: ChatMessage,
   threadStatuses: ReadonlyMap<string, ChatStatus>
 ): ChatMessage {
-  if (message.systemKind !== 'subAgent' || !message.subAgentMeta) {
+  const subAgentMeta = getSubAgentMeta(message);
+  if (!subAgentMeta) {
     return message;
   }
 
-  const receiverThreadIds = message.subAgentMeta.receiverThreadIds ?? [];
+  const receiverThreadIds = subAgentMeta.receiverThreadIds ?? [];
   const nextStatus =
     receiverThreadIds
       .map((threadId) => threadStatuses.get(threadId))
@@ -182,18 +187,25 @@ function syncSubAgentMessageStatus(
     return message;
   }
 
-  const nextContent = replaceSubAgentStatusLine(message.content, nextStatus);
-  const previousStatus = message.subAgentMeta.agentStatus;
-  if (nextContent === message.content && previousStatus === nextStatus) {
+  const text = getMessageText(message);
+  const nextContent = replaceSubAgentStatusLine(text, nextStatus);
+  const previousStatus = subAgentMeta.agentStatus;
+  if (nextContent === text && previousStatus === nextStatus) {
     return message;
   }
 
+  if (message.role !== 'activity') {
+    return message;
+  }
   return {
     ...message,
-    content: nextContent,
-    subAgentMeta: {
-      ...message.subAgentMeta,
-      agentStatus: nextStatus,
+    content: {
+      ...message.content,
+      text: nextContent,
+      subAgent: {
+        ...subAgentMeta,
+        agentStatus: nextStatus,
+      },
     },
   };
 }

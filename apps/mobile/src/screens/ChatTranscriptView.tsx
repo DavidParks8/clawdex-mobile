@@ -36,7 +36,7 @@ import {
   type TranscriptDisplayItem,
 } from './transcriptMessages';
 import { projectTranscript } from './controllers/transcriptProjectionController';
-import type { LiveAssistantMessage } from './controllers/transcriptProjectionController';
+import type { AgUiThreadMessageState } from '../api/agUiMessages';
 import { decorativeAccessibilityProps } from '../accessibility';
 import type { TranscriptContinuationState } from './controllers/transcriptContinuationController';
 
@@ -56,7 +56,7 @@ export interface ChatTranscriptViewProps {
   onScrollInteractionStart: () => void;
   autoScrollStateRef: React.MutableRefObject<AutoScrollState>;
   bottomInset: number;
-  liveAssistantMessages?: readonly LiveAssistantMessage[] | null;
+  liveMessageState?: AgUiThreadMessageState | null;
   onOpenSubAgentThread?: (threadId: string) => void;
   continuationState?: TranscriptContinuationState;
   onLoadEarlier?: () => void;
@@ -78,7 +78,7 @@ export const ChatTranscriptView = memo(function ChatTranscriptView({
   onScrollInteractionStart,
   autoScrollStateRef,
   bottomInset,
-  liveAssistantMessages = null,
+  liveMessageState = null,
   onOpenSubAgentThread,
   continuationState,
   onLoadEarlier,
@@ -102,9 +102,9 @@ export const ChatTranscriptView = memo(function ChatTranscriptView({
         parentChat,
         showToolCalls,
         threadStatuses: agentThreadStatusById,
-        liveAssistantMessages,
+        liveMessageState,
       }),
-    [agentThreadStatusById, chat, liveAssistantMessages, parentChat, showToolCalls]
+    [agentThreadStatusById, chat, liveMessageState, parentChat, showToolCalls]
   );
   const visibleMessages = transcriptView.messages;
   const [visibleStartIndex, setVisibleStartIndex] = useState(() =>
@@ -445,7 +445,7 @@ function areChatTranscriptViewPropsEqual(previous: ChatTranscriptViewProps, next
     previous.onScrollInteractionStart === next.onScrollInteractionStart &&
     previous.autoScrollStateRef === next.autoScrollStateRef &&
     previous.bottomInset === next.bottomInset &&
-    previous.liveAssistantMessages === next.liveAssistantMessages
+    previous.liveMessageState === next.liveMessageState
     && previous.onOpenSubAgentThread === next.onOpenSubAgentThread
     && previous.continuationState === next.continuationState
     && previous.onLoadEarlier === next.onLoadEarlier

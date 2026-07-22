@@ -64,6 +64,7 @@ import {
   updateAgUiLiveAssistantMessages,
   type AgUiLiveAssistantMessages,
 } from '../api/agUi';
+import { getMessageText, getSubAgentMeta } from '../api/messages';
 import { ActivityBar } from '../components/ActivityBar';
 import { ApprovalBanner } from '../components/ApprovalBanner';
 import {
@@ -3016,8 +3017,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             found = true;
             return {
               ...message,
-              role: 'system' as const,
-              systemKind: 'reasoning' as const,
+              role: 'reasoning' as const,
               content,
             };
           });
@@ -3032,8 +3032,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                   ...messages,
                   {
                     id: messageId,
-                    role: 'system',
-                    systemKind: 'reasoning',
+                    role: 'reasoning',
                     content,
                     createdAt,
                   },
@@ -3490,7 +3489,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                 statusUpdatedAt: nowIso,
                 lastError: undefined,
                 lastMessagePreview:
-                  normalizeChatMessageMatchContent(optimisticMessage.content).slice(0, 120) ||
+                  normalizeChatMessageMatchContent(getMessageText(optimisticMessage)).slice(0, 120) ||
                   baseChat.lastMessagePreview,
                 messages: [...baseChat.messages, optimisticMessage],
               };
@@ -4361,7 +4360,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         }
       } catch (err) {
         const currentDraft = draftController.snapshot();
-        const shouldRestoreDraft = submissionController.fail(
+        const shouldRestoreDraft = !createdChatId || submissionController.fail(
           submission,
           currentDraft
         ) || Boolean(
@@ -4550,7 +4549,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
 
             const fallbackPreview =
               normalizeChatMessageMatchContent(
-                nextMessages[nextMessages.length - 1]?.content ?? ''
+                nextMessages.length > 0 ? getMessageText(nextMessages[nextMessages.length - 1]) : ''
               ).slice(0, 120) || '';
             return {
               ...prev,
@@ -7335,9 +7334,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                   onScrollInteractionStart={clearPendingScrollRetries}
                   autoScrollStateRef={autoScrollStateRef}
                   bottomInset={androidComposerReservedInset}
-                  liveAssistantMessages={
-                    liveAssistantByThread[selectedChat.id] ?? null
-                  }
+                  liveMessageState={liveAssistantByThread[selectedChat.id] ?? null}
                   continuationState={transcriptContinuationState}
                   onLoadEarlier={() => {
                     void handleLoadEarlier();
@@ -7397,9 +7394,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                 onScrollInteractionStart={clearPendingScrollRetries}
                 autoScrollStateRef={autoScrollStateRef}
                 bottomInset={chatBottomInset}
-                liveAssistantMessages={
-                  liveAssistantByThread[selectedChat.id] ?? null
-                }
+                liveMessageState={liveAssistantByThread[selectedChat.id] ?? null}
                 continuationState={transcriptContinuationState}
                 onLoadEarlier={() => {
                   void handleLoadEarlier();
@@ -7450,7 +7445,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           chat={agentDetailChat}
           parentChat={agentDetailParentChat}
           runtime={agentDetailRuntime}
-          liveAssistantMessages={
+          liveMessageState={
             agentDetailThreadId ? liveAssistantByThread[agentDetailThreadId] ?? null : null
           }
           display={agentDetailDisplay}
@@ -8479,10 +8474,11 @@ function areChatMessagesEquivalent(
     if (
       left.id !== right.id ||
       left.role !== right.role ||
-      left.content !== right.content ||
+      JSON.stringify(left.content) !== JSON.stringify(right.content) ||
       left.createdAt !== right.createdAt ||
-      left.systemKind !== right.systemKind ||
-      !areChatMessageSubAgentMetaEquivalent(left.subAgentMeta, right.subAgentMeta)
+      (left.role === 'activity' && right.role === 'activity' &&
+        left.activityType !== right.activityType) ||
+      !areChatMessageSubAgentMetaEquivalent(getSubAgentMeta(left), getSubAgentMeta(right))
     ) {
       return false;
     }
@@ -8492,8 +8488,8 @@ function areChatMessagesEquivalent(
 }
 
 function areChatMessageSubAgentMetaEquivalent(
-  previous: ChatTranscriptMessage['subAgentMeta'],
-  next: ChatTranscriptMessage['subAgentMeta']
+  previous: ReturnType<typeof getSubAgentMeta>,
+  next: ReturnType<typeof getSubAgentMeta>
 ): boolean {
   if (previous === next) {
     return true;

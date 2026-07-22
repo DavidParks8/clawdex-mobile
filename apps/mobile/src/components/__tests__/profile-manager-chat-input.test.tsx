@@ -1,4 +1,4 @@
-import { TextInput } from 'react-native';
+import { Platform, TextInput } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import renderer, { act, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 
@@ -143,5 +143,35 @@ describe('ChatInput behavior', () => {
     expect(root.findAllByType(TextInput).find((node) => node.props.accessibilityLabel === 'Message')?.props.scrollEnabled).toBe(true);
     act(() => rendered.update(wrap(<ChatInput {...base} value="" isLoading={false} onAttachPress={base.onAttachPress} reserveFooterSpace />)));
     act(() => rendered.unmount());
+  });
+
+  it('submits once for web Enter and preserves Shift+Enter', () => {
+    const originalOs = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    let tree: ReactTestRenderer | undefined;
+    act(() => {
+      tree = renderer.create(wrap(
+        <ChatInput {...base} value="hi" isLoading={false} onAttachPress={base.onAttachPress} />
+      ));
+    });
+    const rendered = tree as ReactTestRenderer;
+    const input = byLabel(rendered.root as Queryable, 'Message');
+    const preventDefault = jest.fn();
+
+    const onKeyPress = input.props.onKeyPress as (event: {
+      nativeEvent: { key: string; shiftKey?: boolean };
+      preventDefault: () => void;
+    }) => void;
+    act(() => onKeyPress({ nativeEvent: { key: 'Enter' }, preventDefault }));
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(base.onSubmit).toHaveBeenCalledTimes(1);
+
+    act(() => onKeyPress({
+      nativeEvent: { key: 'Enter', shiftKey: true },
+      preventDefault,
+    }));
+    expect(base.onSubmit).toHaveBeenCalledTimes(1);
+    act(() => rendered.unmount());
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOs });
   });
 });

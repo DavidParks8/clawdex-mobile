@@ -245,6 +245,13 @@ impl ClientHub {
         }
     }
 
+    pub(super) async fn broadcast_ag_ui_envelope(&self, envelope: AgUiEventEnvelope) {
+        let _emit_guard = self.notification_emit_lock.lock().await;
+        let params = serde_json::to_value(envelope).unwrap_or(Value::Null);
+        self.broadcast_external_notification(AG_UI_EVENT_METHOD, params)
+            .await;
+    }
+
     async fn broadcast_external_notification(&self, method: &str, params: Value) -> u64 {
         let event_id = self.next_event_id.fetch_add(1, Ordering::Relaxed);
         let mut payload = json!({

@@ -49,7 +49,7 @@ export class SubmissionController {
     return {
       id:
         generated ||
-        `submission-${Crypto.randomUUID()}-${this.counter.toString(36)}`,
+        `submission-${createSubmissionNonce()}-${this.counter.toString(36)}`,
       scopeKey: snapshot.scopeKey,
       draft: snapshot.value,
       mentions: [...attachments.mentions],
@@ -90,4 +90,26 @@ export class SubmissionController {
   ): string {
     return JSON.stringify([scopeKey, draft, attachments.mentions, attachments.localImages]);
   }
+}
+
+function createSubmissionNonce(): string {
+  try {
+    const expoUuid = Crypto.randomUUID();
+    if (expoUuid.trim()) {
+      return expoUuid;
+    }
+  } catch {
+    // HTTP web contexts may not provide Web Crypto randomUUID.
+  }
+
+  try {
+    const webUuid = globalThis.crypto?.randomUUID?.();
+    if (webUuid?.trim()) {
+      return webUuid;
+    }
+  } catch {
+    // Fall through to a non-cryptographic idempotency nonce.
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }

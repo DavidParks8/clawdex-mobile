@@ -9,11 +9,11 @@ import * as helpers from '../mainScreenHelpers';
 
 function message(
   id: string,
-  role: ChatMessage['role'],
+  role: 'user' | 'assistant' | 'system' | 'reasoning',
   content: string,
   createdAt = '2026-07-18T12:00:00.000Z'
 ): ChatMessage {
-  return { id, role, content, createdAt };
+  return { id, role, content, createdAt } as ChatMessage;
 }
 
 function chat(overrides: Partial<Chat> = {}): Chat {
@@ -656,8 +656,7 @@ describe('mainScreenHelpers branch behavior', () => {
   it('formats timeline messages without agent-name filtering', () => {
     expect(helpers.formatTimelineSystemMessage('Title', [])).toBe('Title');
     expect(helpers.formatTimelineSystemMessage('Title', ['one\n', '', 'two'])).toBe('Title\n  └ one\n    two');
-    const messages = [message('r', 'system', 'reason'), message('a', 'assistant', 'answer')];
-    messages[0].systemKind = 'reasoning';
+    const messages = [message('r', 'reasoning', 'reason'), message('a', 'assistant', 'answer')];
     expect(helpers.filterReasoningMessages(messages)).toBe(messages);
   });
 

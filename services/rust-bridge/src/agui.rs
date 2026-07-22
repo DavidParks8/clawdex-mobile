@@ -1,6 +1,11 @@
 use crate::acp::events::{CanonicalEvent, FieldUpdate, MessageRole};
 use crate::acp::identity::AgentSessionId;
-use crate::agui_generated::{AgUiEvent, AgUiEventContent, AgUiEventRole, AgUiEventType, Delta};
+use crate::acp::snapshot::{SessionSnapshot, SnapshotMessage, SnapshotTimelineKind, SnapshotTool};
+use crate::agui_generated::{
+    AgUiEvent, AgUiEventContent, AgUiEventRole, AgUiEventType, Delta, Function, Message,
+    MessageContent, MessageRole as AgUiMessageRole, ToolCall, ToolCallType,
+};
+use crate::resource_limits::NOTIFICATION_MAX_BYTES;
 use crate::*;
 use sha2::{Digest, Sha256};
 
@@ -12,6 +17,7 @@ const STRUCTURED_CHUNK_BYTES: usize = 16 * 1024;
 const MAX_MESSAGE_TOTAL_BYTES: usize = 32 * 1024;
 const MAX_TOOL_TOTAL_BYTES: usize = 64 * 1024;
 const MAX_STRUCTURED_TOOL_BYTES: usize = 64 * 1024;
+const MESSAGES_SNAPSHOT_MAX_BYTES: usize = NOTIFICATION_MAX_BYTES - 16 * 1024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -431,21 +437,35 @@ impl AgUiProjector {
                     let revision = format!("{}\0{}", child_thread_id, task.state);
                     if state.subagent_revision.as_deref() != Some(&revision) {
                         state.subagent_revision = Some(revision);
+                        let mut activity_lines = vec![
+                            if task.state == "completed" {
+                                "• Spawned sub-agent".to_string()
+                            } else {
+                                "• Spawning sub-agent".to_string()
+                            },
+                            format!("  Thread: {child_thread_id}"),
+                            format!("  Status: {}", task.state),
+                        ];
+                        if let Some(result) = content.as_deref().and_then(task_result_preview) {
+                            activity_lines.push(format!("  Result: {result}"));
+                        }
                         projection.events.push(envelope(
                             thread_id,
                             &run.run_id,
                             run.source_turn_id.clone(),
-                            custom_event(
-                                "tethercode.dev/subagent".to_string(),
+                            activity_event(
+                                format!("subagent:{tool_call_id}"),
+                                "tethercode.subagent",
                                 json!({
+                                    "text": activity_lines.join("\n"),
+                                    "subAgent": {
                                     "toolCallId": tool_call_id,
                                     "tool": "spawnAgent",
                                     "senderThreadId": thread_id,
                                     "receiverThreadIds": [child_thread_id],
                                     "agentStatus": task.state,
-                                    "resultPreview": content
-                                        .as_deref()
-                                        .and_then(task_result_preview),
+                                    "navigable": false,
+                                    }
                                 }),
                                 timestamp,
                             ),
@@ -595,12 +615,15 @@ impl AgUiProjector {
             }
             CanonicalEvent::Plan {
                 thread_id, entries, ..
-            } => push_custom(
+            } => push_activity(
                 &mut projection.events,
                 &self.runs,
                 thread_id,
-                "tethercode.dev/plan",
-                json!({ "entries": entries.iter().take(128).map(|entry| json!({
+                format!("{thread_id}::plan"),
+                "tethercode.plan",
+                json!({
+                    "text": "Plan updated",
+                    "entries": entries.iter().take(128).map(|entry| json!({
                     "content": bounded(&entry.content, 2 * 1024),
                     "priority": bounded(&entry.priority, 256),
                     "status": bounded(&entry.status, 256)
@@ -684,6 +707,278 @@ impl AgUiProjector {
             }
         }
         self.closed_threads.insert(thread_id.to_string());
+    }
+}
+
+pub(super) fn messages_snapshot_envelope(
+    snapshot: &SessionSnapshot,
+    run_id: String,
+    source_turn_id: Option<String>,
+) -> AgUiEventEnvelope {
+    let timestamp = Utc::now().timestamp_millis();
+    let messages_by_id = snapshot
+        .messages
+        .iter()
+        .map(|message| (message.id.as_str(), message))
+        .collect::<HashMap<_, _>>();
+    let mut messages = Vec::new();
+    for entry in &snapshot.timeline {
+        match entry.kind {
+            SnapshotTimelineKind::Message | SnapshotTimelineKind::Reasoning => {
+                let Some(message) = messages_by_id.get(entry.canonical_id.as_str()) else {
+                    continue;
+                };
+                messages.push(Message {
+                    id: message.id.clone(),
+                    role: match message.role {
+                        MessageRole::User => AgUiMessageRole::User,
+                        MessageRole::Agent => AgUiMessageRole::Assistant,
+                        MessageRole::Thought => AgUiMessageRole::Reasoning,
+                    },
+                    content: Some(MessageContent::String(snapshot_message_text(message))),
+                    encrypted_value: None,
+                    name: None,
+                    tool_calls: None,
+                    error: None,
+                    tool_call_id: None,
+                    activity_type: None,
+                });
+            }
+            SnapshotTimelineKind::Tool => {
+                let Some(tool) = snapshot.tools.get(&entry.canonical_id) else {
+                    continue;
+                };
+                if let Some(task) = parse_task_subagent(&tool.content) {
+                    let child_thread_id = AgentSessionId::new(&snapshot.agent_id, &task.session_id)
+                        .ok()
+                        .map(|identity| identity.encode());
+                    let mut lines = vec![if task.state == "completed" {
+                        "• Spawned sub-agent".to_string()
+                    } else {
+                        "• Spawning sub-agent".to_string()
+                    }];
+                    if let Some(thread_id) = &child_thread_id {
+                        lines.push(format!("  Thread: {thread_id}"));
+                    }
+                    lines.push(format!("  Status: {}", task.state));
+                    if let Some(result) = task_result_preview(&tool.content) {
+                        lines.push(format!("  Result: {result}"));
+                    }
+                    let content = json!({
+                        "text": lines.join("\n"),
+                        "subAgent": {
+                            "tool": "spawnAgent",
+                            "senderThreadId": snapshot.thread_id,
+                            "receiverThreadIds": child_thread_id.into_iter().collect::<Vec<_>>(),
+                            "agentStatus": task.state,
+                            "navigable": false,
+                        }
+                    });
+                    messages.push(activity_message(
+                        format!("subagent:{}", tool.id),
+                        "tethercode.subagent",
+                        content,
+                    ));
+                    continue;
+                }
+                messages.push(Message {
+                    id: format!("tool-call:{}", tool.id),
+                    role: AgUiMessageRole::Assistant,
+                    content: Some(MessageContent::String(String::new())),
+                    encrypted_value: None,
+                    name: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: tool.id.clone(),
+                        tool_call_type: ToolCallType::Function,
+                        function: Function {
+                            name: bounded(
+                                if tool.title.trim().is_empty() {
+                                    format!("{:?}", tool.kind).to_ascii_lowercase()
+                                } else {
+                                    tool.title.clone()
+                                },
+                                256,
+                            ),
+                            arguments: "{}".to_string(),
+                        },
+                        encrypted_value: None,
+                    }]),
+                    error: None,
+                    tool_call_id: None,
+                    activity_type: None,
+                });
+                messages.push(Message {
+                    id: format!("tool-result:{}", tool.id),
+                    role: AgUiMessageRole::Tool,
+                    content: Some(MessageContent::String(tool_snapshot_text(tool))),
+                    encrypted_value: None,
+                    name: None,
+                    tool_calls: None,
+                    error: matches!(
+                        tool.status,
+                        agent_client_protocol::schema::v1::ToolCallStatus::Failed
+                    )
+                    .then(|| "Tool failed".to_string()),
+                    tool_call_id: Some(tool.id.clone()),
+                    activity_type: None,
+                });
+            }
+        }
+    }
+    let mut snapshot_envelope = envelope(
+        &snapshot.thread_id,
+        &run_id,
+        source_turn_id,
+        AgUiEvent {
+            messages: Some(messages),
+            ..generated_event(AgUiEventType::MessagesSnapshot, timestamp)
+        },
+    );
+    while serde_json::to_vec(&snapshot_envelope)
+        .expect("messages snapshot envelope serializes")
+        .len()
+        > MESSAGES_SNAPSHOT_MAX_BYTES
+    {
+        let Some(messages) = snapshot_envelope.event.messages.as_mut() else {
+            break;
+        };
+        if messages.len() <= 1 {
+            break;
+        }
+        remove_oldest_snapshot_message_group(messages);
+    }
+    snapshot_envelope
+}
+
+fn remove_oldest_snapshot_message_group(messages: &mut Vec<Message>) {
+    let oldest = messages.remove(0);
+    let tool_call_ids = oldest
+        .tool_calls
+        .as_ref()
+        .map(|calls| {
+            calls
+                .iter()
+                .map(|call| call.id.as_str())
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default();
+    let result_call_id = oldest.tool_call_id.as_deref();
+    messages.retain(|message| {
+        if message
+            .tool_call_id
+            .as_deref()
+            .is_some_and(|id| tool_call_ids.contains(id))
+        {
+            return false;
+        }
+        if let Some(result_call_id) = result_call_id {
+            return !message
+                .tool_calls
+                .as_ref()
+                .is_some_and(|calls| calls.iter().any(|call| call.id == result_call_id));
+        }
+        true
+    });
+}
+
+fn snapshot_message_text(message: &SnapshotMessage) -> String {
+    let mut text = message
+        .parts
+        .iter()
+        .flat_map(snapshot_content_lines)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if message.truncated {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str("[message content truncated]");
+    }
+    bounded(text, MAX_MESSAGE_TOTAL_BYTES)
+}
+
+fn snapshot_content_lines(value: &Value) -> Vec<String> {
+    match value {
+        Value::String(value) => (!value.is_empty())
+            .then(|| value.clone())
+            .into_iter()
+            .collect(),
+        Value::Array(values) => values.iter().flat_map(snapshot_content_lines).collect(),
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("text") {
+                return object
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .into_iter()
+                    .collect();
+            }
+            if object.get("type").and_then(Value::as_str) == Some("content") {
+                return object
+                    .get("content")
+                    .map(snapshot_content_lines)
+                    .unwrap_or_default();
+            }
+            if let Some(resource) = object.get("resource").and_then(Value::as_object) {
+                let mut lines = Vec::new();
+                if let Some(uri) = resource.get("uri").and_then(Value::as_str) {
+                    lines.push(format!("[resource: {uri}]"));
+                }
+                if let Some(text) = resource.get("text").and_then(Value::as_str) {
+                    lines.push(text.to_string());
+                }
+                return lines;
+            }
+            serde_json::to_string(value).ok().into_iter().collect()
+        }
+        Value::Null => Vec::new(),
+        _ => vec![value.to_string()],
+    }
+}
+
+fn tool_snapshot_text(tool: &SnapshotTool) -> String {
+    let structured = json!({
+        "content": tool.structured_content,
+        "locations": tool.locations,
+    });
+    let mut parts = vec![tool.content.clone()];
+    if !tool.structured_content.is_empty() || !tool.locations.is_empty() {
+        parts.push(structured.to_string());
+    }
+    if tool.truncated {
+        parts.push("[tool content truncated]".to_string());
+    }
+    bounded(
+        parts
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        MAX_TOOL_TOTAL_BYTES,
+    )
+}
+
+fn activity_message(id: String, activity_type: &str, content: Value) -> Message {
+    let content = content
+        .as_object()
+        .map(|object| {
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), Some(value.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
+    Message {
+        id,
+        role: AgUiMessageRole::Activity,
+        content: Some(MessageContent::AnythingMap(content)),
+        encrypted_value: None,
+        name: None,
+        tool_calls: None,
+        error: None,
+        tool_call_id: None,
+        activity_type: Some(activity_type.to_string()),
     }
 }
 
@@ -799,6 +1094,30 @@ fn custom_event(name: String, value: Value, timestamp: i64) -> AgUiEvent {
         name: Some(name),
         value: Some(value),
         ..generated_event(AgUiEventType::Custom, timestamp)
+    }
+}
+
+fn activity_event(
+    message_id: String,
+    activity_type: &str,
+    content: Value,
+    timestamp: i64,
+) -> AgUiEvent {
+    let content = content
+        .as_object()
+        .map(|object| {
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), Some(value.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
+    AgUiEvent {
+        message_id: Some(message_id),
+        activity_type: Some(activity_type.to_string()),
+        content: Some(AgUiEventContent::AnythingMap(content)),
+        replace: Some(true),
+        ..generated_event(AgUiEventType::ActivitySnapshot, timestamp)
     }
 }
 
@@ -1109,6 +1428,27 @@ fn push_custom(
     ));
 }
 
+fn push_activity(
+    events: &mut Vec<AgUiEventEnvelope>,
+    runs: &HashMap<String, AgUiRunState>,
+    thread_id: &str,
+    message_id: String,
+    activity_type: &str,
+    content: Value,
+    timestamp: i64,
+) {
+    let (run_id, source_turn_id) = runs.get(thread_id).map_or_else(
+        || (format!("{thread_id}::session"), None),
+        |run| (run.run_id.clone(), run.source_turn_id.clone()),
+    );
+    events.push(envelope(
+        thread_id,
+        &run_id,
+        source_turn_id,
+        activity_event(message_id, activity_type, content, timestamp),
+    ));
+}
+
 fn canonical_source_turn_id(event: &CanonicalEvent) -> Option<&str> {
     match event {
         CanonicalEvent::RunStarted { source_turn_id, .. }
@@ -1164,6 +1504,8 @@ mod tests {
                 AgUiEventType::ToolCallArgs => "TOOL_CALL_ARGS",
                 AgUiEventType::ToolCallEnd => "TOOL_CALL_END",
                 AgUiEventType::ToolCallResult => "TOOL_CALL_RESULT",
+                AgUiEventType::ActivitySnapshot => "ACTIVITY_SNAPSHOT",
+                AgUiEventType::MessagesSnapshot => "MESSAGES_SNAPSHOT",
                 AgUiEventType::Custom => "CUSTOM",
                 _ => "OTHER",
             })
@@ -1315,24 +1657,24 @@ mod tests {
         projector.project_canonical(&canonical_run_started());
         let task = |state: &str| {
             CanonicalEvent::Tool {
-            agent_id: "alpha-agent".to_string(),
-            thread_id: "v1.YWxwaGEtYWdlbnQ.c2Vzc2lvbg".to_string(),
-            run_id: Some("run-1".to_string()),
-            source_turn_id: Some("turn-1".to_string()),
-            generation: Some(1),
-            tool_call_id: "task-1".to_string(),
-            kind: ToolKind::Other,
-            status: ToolCallStatus::Completed,
-            title: "task".to_string(),
-            content: FieldUpdate::Set(format!(
-                "<task id=\"child-session\" state=\"{state}\">\n<task_result>done</task_result>\n</task>"
-            )),
-            structured_content: FieldUpdate::Set(vec![json!({
-                "type": "text",
-                "text": "duplicate task result"
-            })]),
-            locations: FieldUpdate::Set(Vec::new()),
-        }
+                agent_id: "alpha-agent".to_string(),
+                thread_id: "v1.YWxwaGEtYWdlbnQ.c2Vzc2lvbg".to_string(),
+                run_id: Some("run-1".to_string()),
+                source_turn_id: Some("turn-1".to_string()),
+                generation: Some(1),
+                tool_call_id: "task-1".to_string(),
+                kind: ToolKind::Other,
+                status: ToolCallStatus::Completed,
+                title: "task".to_string(),
+                content: FieldUpdate::Set(format!(
+                    "<task id=\"child-session\" state=\"{state}\">\n<task_result>done</task_result>\n</task>"
+                )),
+                structured_content: FieldUpdate::Set(vec![json!({
+                    "type": "text",
+                    "text": "duplicate task result"
+                })]),
+                locations: FieldUpdate::Set(Vec::new()),
+            }
         };
 
         let first = projector.project_canonical(&task("completed"));
@@ -1342,15 +1684,20 @@ mod tests {
                 "TOOL_CALL_START",
                 "TOOL_CALL_ARGS",
                 "TOOL_CALL_END",
-                "CUSTOM"
+                "ACTIVITY_SNAPSHOT"
             ]
         );
-        let custom = serde_json::to_value(first.events.last().unwrap()).unwrap();
-        assert_eq!(custom["event"]["name"], "tethercode.dev/subagent");
-        assert_eq!(custom["event"]["value"]["agentStatus"], "completed");
-        assert_eq!(custom["event"]["value"]["resultPreview"], "done");
+        let activity = serde_json::to_value(first.events.last().unwrap()).unwrap();
+        assert_eq!(activity["event"]["activityType"], "tethercode.subagent");
         assert_eq!(
-            custom["event"]["value"]["receiverThreadIds"][0],
+            activity["event"]["content"]["subAgent"]["agentStatus"],
+            "completed"
+        );
+        assert!(activity["event"]["content"]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("Result: done")));
+        assert_eq!(
+            activity["event"]["content"]["subAgent"]["receiverThreadIds"][0],
             AgentSessionId::new("alpha-agent", "child-session")
                 .unwrap()
                 .encode()
@@ -1361,7 +1708,79 @@ mod tests {
         assert!(repeated.events.is_empty());
 
         let changed = projector.project_canonical(&task("running"));
-        assert_eq!(event_types(&changed.events), ["CUSTOM"]);
+        assert_eq!(event_types(&changed.events), ["ACTIVITY_SNAPSHOT"]);
+    }
+
+    #[test]
+    fn terminal_snapshot_uses_official_reasoning_and_tool_messages() {
+        let mut snapshot = SessionSnapshot::new(
+            "alpha-agent".to_string(),
+            "v1.YWxwaGEtYWdlbnQ.c2Vzc2lvbg".to_string(),
+        );
+        snapshot.apply(&canonical_message(MessageRole::User, "user", "question"));
+        snapshot.apply(&canonical_message(
+            MessageRole::Thought,
+            "thought",
+            "reason",
+        ));
+        snapshot.apply(&canonical_message(MessageRole::Agent, "answer", "final"));
+        snapshot.apply(&CanonicalEvent::Tool {
+            agent_id: "alpha-agent".to_string(),
+            thread_id: snapshot.thread_id.clone(),
+            run_id: Some("run-1".to_string()),
+            source_turn_id: Some("turn-1".to_string()),
+            generation: Some(1),
+            tool_call_id: "tool-1".to_string(),
+            kind: ToolKind::Read,
+            status: ToolCallStatus::Completed,
+            title: "Read".to_string(),
+            content: FieldUpdate::Set("done".to_string()),
+            structured_content: FieldUpdate::Set(Vec::new()),
+            locations: FieldUpdate::Set(Vec::new()),
+        });
+
+        let envelope =
+            messages_snapshot_envelope(&snapshot, "run-1".to_string(), Some("turn-1".to_string()));
+        let value = serde_json::to_value(envelope).unwrap();
+        assert_eq!(value["event"]["type"], "MESSAGES_SNAPSHOT");
+        let messages = value["event"]["messages"].as_array().unwrap();
+        assert!(messages
+            .iter()
+            .any(|message| message["role"] == "reasoning"));
+        assert!(messages.iter().any(|message| {
+            message["role"] == "assistant" && message["toolCalls"][0]["id"] == "tool-1"
+        }));
+        assert!(messages
+            .iter()
+            .any(|message| { message["role"] == "tool" && message["toolCallId"] == "tool-1" }));
+    }
+
+    #[test]
+    fn terminal_snapshot_stays_below_notification_limit_and_keeps_newest_messages() {
+        let mut snapshot = SessionSnapshot::new(
+            "alpha-agent".to_string(),
+            "v1.YWxwaGEtYWdlbnQ.c2Vzc2lvbg".to_string(),
+        );
+        let content = "x".repeat(31 * 1024);
+        for index in 0..12 {
+            snapshot.apply(&canonical_message(
+                MessageRole::Agent,
+                &format!("message-{index}"),
+                &content,
+            ));
+        }
+        snapshot.apply(&canonical_message(
+            MessageRole::Agent,
+            "latest",
+            "latest answer",
+        ));
+
+        let envelope = messages_snapshot_envelope(&snapshot, "run-1".to_string(), None);
+        let serialized = serde_json::to_vec(&envelope).unwrap();
+        assert!(serialized.len() <= MESSAGES_SNAPSHOT_MAX_BYTES);
+        let messages = envelope.event.messages.unwrap();
+        assert!(!messages.iter().any(|message| message.id == "message-0"));
+        assert!(messages.iter().any(|message| message.id == "latest"));
     }
 
     #[test]
@@ -1369,16 +1788,20 @@ mod tests {
         let mut projector = AgUiProjector::default();
         projector.project_canonical(&canonical_run_started());
         let thread_id = "v1.YWxwaGEtYWdlbnQ.c2Vzc2lvbg".to_string();
+        let plan = projector.project_canonical(&CanonicalEvent::Plan {
+            agent_id: "alpha-agent".into(),
+            thread_id: thread_id.clone(),
+            entries: vec![crate::acp::events::PlanEntry {
+                content: "Inspect".into(),
+                priority: "high".into(),
+                status: "pending".into(),
+            }],
+        });
+        assert_eq!(event_types(&plan.events), ["ACTIVITY_SNAPSHOT"]);
+        let plan_value = serde_json::to_value(&plan.events[0]).unwrap();
+        assert_eq!(plan_value["event"]["activityType"], "tethercode.plan");
+
         let metadata = [
-            CanonicalEvent::Plan {
-                agent_id: "alpha-agent".into(),
-                thread_id: thread_id.clone(),
-                entries: vec![crate::acp::events::PlanEntry {
-                    content: "Inspect".into(),
-                    priority: "high".into(),
-                    status: "pending".into(),
-                }],
-            },
             CanonicalEvent::Usage {
                 agent_id: "alpha-agent".into(),
                 thread_id: thread_id.clone(),
@@ -1428,7 +1851,6 @@ mod tests {
         assert_eq!(
             names,
             [
-                "tethercode.dev/plan",
                 "tethercode.dev/usage",
                 "tethercode.dev/mode",
                 "tethercode.dev/config",

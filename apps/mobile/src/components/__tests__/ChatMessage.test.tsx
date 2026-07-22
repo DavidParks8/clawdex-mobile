@@ -8,6 +8,11 @@ import renderer, {
 } from 'react-test-renderer';
 
 import type { ChatMessage as ApiChatMessage } from '../../api/types';
+import {
+  COMPACTION_ACTIVITY_TYPE,
+  createActivityMessage,
+  SUBAGENT_ACTIVITY_TYPE,
+} from '../../api/messages';
 import { createAppTheme, AppThemeProvider } from '../../theme';
 import { ChatMessage, ToolActivityGroup } from '../ChatMessage';
 
@@ -28,6 +33,14 @@ type QueryableTestInstance = ReactTestInstance & {
 };
 
 type QueryableRenderer = ReactTestRenderer & { root: QueryableTestInstance; toJSON(): unknown };
+type LegacyTestMessage = Omit<ApiChatMessage, 'role' | 'content'> & {
+  id: string;
+  role: ApiChatMessage['role'] | 'system';
+  content: string;
+  createdAt: string;
+  systemKind?: 'tool' | 'reasoning' | 'subAgent' | 'compaction';
+  subAgentMeta?: Parameters<typeof createActivityMessage>[2]['subAgent'];
+};
 
 jest.mock('react-native-reanimated', () => {
   const reactNative = jest.requireActual('react-native');
@@ -251,7 +264,7 @@ describe('ChatMessage command rows', () => {
   const theme = createAppTheme('dark');
 
   it('renders long command titles in horizontal scroll viewports without ellipsis', () => {
-    const messages: ApiChatMessage[] = [
+    const messages: LegacyTestMessage[] = [
       {
         id: 'tool_command',
         role: 'system',
@@ -265,7 +278,7 @@ describe('ChatMessage command rows', () => {
     act(() => {
       rendered = renderer.create(
         <AppThemeProvider theme={theme}>
-          <ToolActivityGroup messages={messages} />
+          <ToolActivityGroup messages={messages.map(toOfficialMessage)} />
         </AppThemeProvider>
       );
     });
@@ -436,14 +449,14 @@ describe('ChatMessage system timeline matrices', () => {
   });
 
   it('renders collapsed and expanded tool activity groups with error and overflow entries', () => {
-    const messages: ApiChatMessage[] = [
+    const messages: LegacyTestMessage[] = [
       { id: 'one', role: 'system', systemKind: 'tool', content: '• Ran npm test\n  └ pass', createdAt: '2026-04-17T00:00:00.000Z' },
       { id: 'two', role: 'system', systemKind: 'tool', content: '• Called tool `lint`\n  └ clean', createdAt: '2026-04-17T00:00:00.000Z' },
       { id: 'three', role: 'system', systemKind: 'tool', content: '• Tool failed `build`\n  └ compile error', createdAt: '2026-04-17T00:00:00.000Z' },
     ];
     let tree: ReactTestRenderer | undefined;
     act(() => {
-      tree = renderer.create(<AppThemeProvider theme={createAppTheme('dark')}><ToolActivityGroup messages={messages} liveTurnActive /></AppThemeProvider>);
+      tree = renderer.create(<AppThemeProvider theme={createAppTheme('dark')}><ToolActivityGroup messages={messages.map(toOfficialMessage)} liveTurnActive /></AppThemeProvider>);
     });
     const rendered = expectValue(tree);
     const root = rendered.root as QueryableTestInstance;
@@ -493,10 +506,10 @@ describe('ChatMessage system timeline matrices', () => {
     act(() => {
       tree = renderer.create(
         <AppThemeProvider theme={createAppTheme('dark')}>
-          <ToolActivityGroup messages={[{
+          <ToolActivityGroup messages={[toOfficialMessage({
             id: title, role: 'system', systemKind: 'tool', content: `• ${title}`,
             createdAt: '2026-04-17T00:00:00.000Z',
-          }]} />
+          })]} />
         </AppThemeProvider>
       );
     });
@@ -506,13 +519,13 @@ describe('ChatMessage system timeline matrices', () => {
 
   it('expands image and long-output tool details and updates command fades', () => {
     const details = Array.from({ length: 26 }, (_, index) => `line ${String(index + 1)}`);
-    const messages: ApiChatMessage[] = [
+    const messages: LegacyTestMessage[] = [
       { id: 'view', role: 'system', systemKind: 'tool', content: '• Viewed image\n  └ /tmp/screen.png', createdAt: '2026-04-17T00:00:00.000Z' },
       { id: 'long', role: 'system', systemKind: 'tool', content: `• Ran exhaustive command\n${details.map((line) => `  └ ${line}`).join('\n')}`, createdAt: '2026-04-17T00:00:00.000Z' },
     ];
     let tree: ReactTestRenderer | undefined;
     act(() => {
-      tree = renderer.create(<AppThemeProvider theme={createAppTheme('dark')}><ToolActivityGroup messages={messages} bridgeUrl="https://bridge" bridgeToken="token" /></AppThemeProvider>);
+      tree = renderer.create(<AppThemeProvider theme={createAppTheme('dark')}><ToolActivityGroup messages={messages.map(toOfficialMessage)} bridgeUrl="https://bridge" bridgeToken="token" /></AppThemeProvider>);
     });
     const rendered = expectValue(tree);
     const root = rendered.root as QueryableTestInstance;
@@ -586,7 +599,7 @@ describe('ChatMessage system timeline matrices', () => {
 });
 
 function renderMessage(
-  message: ApiChatMessage,
+  message: ApiChatMessage | LegacyTestMessage,
   props: { bridgeUrl?: string; bridgeToken?: string; onOpenLocalPreview?: (url: string) => void; onOpenSubAgentThread?: (id: string) => void } = {}
 ): QueryableRenderer {
   let tree: ReactTestRenderer | undefined;
@@ -594,12 +607,32 @@ function renderMessage(
     tree = renderer.create(
       <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 59, right: 0, bottom: 34, left: 0 } }}>
         <AppThemeProvider theme={createAppTheme('dark')}>
-          <ChatMessage message={message} {...props} />
+          <ChatMessage message={toOfficialMessage(message)} {...props} />
         </AppThemeProvider>
       </SafeAreaProvider>
     );
   });
   return expectValue(tree) as QueryableRenderer;
+}
+
+function toOfficialMessage(message: ApiChatMessage | LegacyTestMessage): ApiChatMessage {
+  const legacy = message as LegacyTestMessage;
+  if (legacy.systemKind === 'reasoning') {
+    return { id: legacy.id, role: 'reasoning', content: legacy.content, createdAt: legacy.createdAt };
+  }
+  if (legacy.systemKind === 'tool') {
+    return { id: legacy.id, role: 'tool', toolCallId: legacy.id, content: legacy.content, createdAt: legacy.createdAt };
+  }
+  if (legacy.systemKind === 'subAgent') {
+    return createActivityMessage(legacy.id, SUBAGENT_ACTIVITY_TYPE, {
+      text: legacy.content,
+      ...(legacy.subAgentMeta ? { subAgent: legacy.subAgentMeta } : {}),
+    }, legacy.createdAt);
+  }
+  if (legacy.systemKind === 'compaction') {
+    return createActivityMessage(legacy.id, COMPACTION_ACTIVITY_TYPE, { text: legacy.content }, legacy.createdAt);
+  }
+  return message as ApiChatMessage;
 }
 
 function hasRenderedText(root: QueryableTestInstance, text: string): boolean {
