@@ -1820,6 +1820,10 @@ mod tests {
                 entries: vec![crate::acp::events::ConfigEntry {
                     id: "model".into(),
                     value: "example".into(),
+                    name: "Model".into(),
+                    description: None,
+                    category: Some("model".into()),
+                    options: Vec::new(),
                 }],
             },
             CanonicalEvent::SessionInfo {

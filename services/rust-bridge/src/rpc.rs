@@ -62,6 +62,7 @@ pub(crate) fn is_forwarded_method(method: &str) -> bool {
             | "thread/loaded/list"
             | "thread/read"
             | "thread/resume"
+            | "thread/config/set"
             | "thread/start"
             | "turn/interrupt"
             | "turn/start"

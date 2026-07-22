@@ -4,10 +4,14 @@ use agent_client_protocol::schema::v1::{
     ContentBlock, ContentChunk, SessionConfigKind, SessionUpdate, ToolCallContent, ToolCallStatus,
     ToolKind,
 };
+use agent_client_protocol::schema::v1::{
+    SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOptions,
+};
 use agent_client_protocol::schema::MaybeUndefined;
 
 use super::events::{
-    CanonicalEvent, CommandEntry, ConfigEntry, FieldUpdate, MessageRole, PlanEntry,
+    CanonicalEvent, CommandEntry, ConfigEntry, ConfigOptionValue, FieldUpdate, MessageRole,
+    PlanEntry,
 };
 use super::session::{AcpSession, ReceivedSessionNotification};
 
@@ -167,14 +171,7 @@ pub async fn handle_session_notification(
             entries: update
                 .config_options
                 .into_iter()
-                .map(|option| ConfigEntry {
-                    id: option.id.to_string(),
-                    value: match option.kind {
-                        SessionConfigKind::Select(select) => select.current_value.to_string(),
-                        SessionConfigKind::Boolean(boolean) => boolean.current_value.to_string(),
-                        _ => "unknown".to_string(),
-                    },
-                })
+                .map(config_entry)
                 .collect(),
         },
         SessionUpdate::SessionInfoUpdate(update) => CanonicalEvent::SessionInfo {
@@ -199,6 +196,51 @@ pub async fn handle_session_notification(
         },
     };
     session.emit(event).await;
+}
+
+pub fn config_entry(option: SessionConfigOption) -> ConfigEntry {
+    let value = match &option.kind {
+        SessionConfigKind::Select(select) => select.current_value.to_string(),
+        SessionConfigKind::Boolean(boolean) => boolean.current_value.to_string(),
+        _ => "unknown".to_string(),
+    };
+    let options = match option.kind {
+        SessionConfigKind::Select(select) => match select.options {
+            SessionConfigSelectOptions::Ungrouped(options) => options,
+            SessionConfigSelectOptions::Grouped(groups) => {
+                groups.into_iter().flat_map(|group| group.options).collect()
+            }
+            _ => Vec::new(),
+        },
+        SessionConfigKind::Boolean(_) => Vec::new(),
+        _ => Vec::new(),
+    }
+    .into_iter()
+    .map(|entry| ConfigOptionValue {
+        value: entry.value.to_string(),
+        name: entry.name,
+        description: entry.description,
+    })
+    .collect();
+    ConfigEntry {
+        id: option.id.to_string(),
+        value,
+        name: option.name,
+        description: option.description,
+        category: option.category.map(|category| match category {
+            SessionConfigOptionCategory::Mode => "mode".to_string(),
+            SessionConfigOptionCategory::Model => "model".to_string(),
+            SessionConfigOptionCategory::ModelConfig => "model_config".to_string(),
+            SessionConfigOptionCategory::ThoughtLevel => "thought_level".to_string(),
+            SessionConfigOptionCategory::Other(value) => value,
+            _ => "other".to_string(),
+        }),
+        options,
+    }
+}
+
+pub fn config_entries(options: Vec<SessionConfigOption>) -> Vec<ConfigEntry> {
+    options.into_iter().map(config_entry).collect()
 }
 
 async fn message_event(

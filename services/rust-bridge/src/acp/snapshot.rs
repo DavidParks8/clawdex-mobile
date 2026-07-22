@@ -6,7 +6,8 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 use super::events::{
-    CanonicalEvent, CommandEntry, ConfigEntry, FieldUpdate, MessageRole, PlanEntry,
+    CanonicalEvent, CommandEntry, ConfigEntry, ConfigOptionValue, FieldUpdate, MessageRole,
+    PlanEntry,
 };
 
 const MAX_MESSAGES: usize = 128;
@@ -877,6 +878,22 @@ fn bound_plan(mut entry: PlanEntry) -> PlanEntry {
 fn bound_config(mut entry: ConfigEntry) -> ConfigEntry {
     entry.id = bound(entry.id, MAX_TEXT_BYTES);
     entry.value = bound(entry.value, MAX_TEXT_BYTES);
+    entry.name = bound(entry.name, MAX_TEXT_BYTES);
+    entry.description = entry.description.map(|value| bound(value, MAX_TEXT_BYTES));
+    entry.category = entry.category.map(|value| bound(value, 256));
+    entry.options = entry
+        .options
+        .into_iter()
+        .take(MAX_ENTRIES)
+        .map(bound_config_option)
+        .collect();
+    entry
+}
+
+fn bound_config_option(mut entry: ConfigOptionValue) -> ConfigOptionValue {
+    entry.value = bound(entry.value, MAX_TEXT_BYTES);
+    entry.name = bound(entry.name, MAX_TEXT_BYTES);
+    entry.description = entry.description.map(|value| bound(value, MAX_TEXT_BYTES));
     entry
 }
 fn bound_command(mut entry: CommandEntry) -> CommandEntry {
@@ -1209,6 +1226,10 @@ mod tests {
         snapshot.config = vec![ConfigEntry {
             id: "model".to_string(),
             value: "example-model".to_string(),
+            name: "Model".to_string(),
+            description: None,
+            category: Some("model".to_string()),
+            options: Vec::new(),
         }];
         snapshot.commands = vec![CommandEntry {
             name: "test".to_string(),
@@ -1728,6 +1749,10 @@ mod tests {
                 ConfigEntry {
                     id: oversized.clone(),
                     value: oversized.clone(),
+                    name: oversized.clone(),
+                    description: None,
+                    category: None,
+                    options: Vec::new(),
                 };
                 MAX_ENTRIES + 1
             ],

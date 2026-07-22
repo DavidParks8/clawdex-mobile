@@ -390,6 +390,73 @@ describe('MainScreen control and modal coverage', () => {
     act(() => failed.tree.unmount());
   });
 
+  it('uses advertised ACP model, thinking, and primary mode controls', async () => {
+    const configuredChat: Chat = {
+      ...rootChat,
+      acpConfig: [
+        {
+          id: 'model', value: 'github-copilot/gpt-5.4', category: 'model',
+          options: [
+            { value: 'github-copilot/gpt-5.4', name: 'GitHub Copilot/GPT-5.4' },
+            { value: 'github-copilot/gpt-5-mini', name: 'GitHub Copilot/GPT-5 Mini' },
+          ],
+        },
+        {
+          id: 'effort', value: 'high', category: 'thought_level',
+          options: [{ value: 'none', name: 'None' }, { value: 'high', name: 'High' }],
+        },
+        {
+          id: 'mode', value: 'build', category: 'mode',
+          options: [
+            { value: 'build', name: 'build' },
+            { value: 'plan', name: 'plan', description: 'Plan before changes.' },
+          ],
+        },
+      ],
+    };
+    const api = createApi();
+    (api.getChat as jest.Mock).mockResolvedValue(configuredChat);
+    (api.peekChat as jest.Mock).mockReturnValue(configuredChat);
+    (api.setThreadConfigOption as jest.Mock).mockResolvedValue(configuredChat);
+    (api.listModelOptions as jest.Mock).mockResolvedValue([
+      {
+        id: 'github-copilot/gpt-5.4', displayName: 'GPT-5.4', providerName: 'GitHub Copilot',
+        contextWindow: 1_050_000, reasoningEffort: [{ effort: 'none' }, { effort: 'high' }],
+      },
+      {
+        id: 'github-copilot/gpt-5-mini', displayName: 'GPT-5 Mini', providerName: 'GitHub Copilot',
+        contextWindow: 264_000, reasoningEffort: [{ effort: 'none' }, { effort: 'high' }],
+      },
+    ]);
+    const { tree } = await renderMain({ api, selectedChat: configuredChat });
+    const root = rootOf(tree);
+
+    await press(byLabelPrefix(root, 'Model controls, '));
+    await press(pressForText(root, 'Change model'));
+    await act(async () => {
+      await flush();
+      await flush();
+    });
+    expect(byLabel(root, 'GitHub Copilot · GPT-5.4')).toBeTruthy();
+    await press(byLabel(root, 'GitHub Copilot · GPT-5 Mini'));
+    expect(api.setThreadConfigOption).toHaveBeenCalledWith(
+      configuredChat.id,
+      'model',
+      'github-copilot/gpt-5-mini'
+    );
+
+    await press(byLabelPrefix(root, 'Agent mode, '));
+    await press(pressForText(root, 'plan'));
+    expect(api.setThreadConfigOption).toHaveBeenCalledWith(configuredChat.id, 'mode', 'plan');
+
+    await press(byLabelPrefix(root, 'Model controls, '));
+    await press(pressForText(root, 'Thinking level'));
+    await press(pressForText(root, 'High'));
+    expect(api.setThreadConfigOption).toHaveBeenCalledWith(configuredChat.id, 'effort', 'high');
+
+    act(() => tree.unmount());
+  });
+
   it('browses, pins, selects, defaults, loads, and reports workspace failures', async () => {
     const onDefaultStartCwdChange = jest.fn();
     let resolveBrowse: ((value: unknown) => void) | undefined;

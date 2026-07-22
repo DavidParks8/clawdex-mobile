@@ -96,7 +96,14 @@ export interface RawAcpSnapshot {
   plan: Array<{ content: string; priority: string; status: string }>;
   usage: { used?: number | null; size?: number | null; cost?: string | null };
   mode?: string | null;
-  config: Array<{ id: string; value: string }>;
+  config: Array<{
+    id: string;
+    value: string;
+    name?: string;
+    description?: string;
+    category?: string;
+    options?: Array<{ value: string; name: string; description?: string }>;
+  }>;
   commands: Array<{ name: string; description: string }>;
   session: {
     agentId: string;
@@ -209,6 +216,19 @@ export function toPreview(value: string): string {
 
 function unixSecondsToIso(value: number): string {
   return new Date(value * 1000).toISOString();
+}
+
+function readTimestampSeconds(value: unknown): number | null {
+  const numeric = readNumber(value);
+  if (numeric !== null && Number.isFinite(numeric) && numeric > 0) {
+    return numeric > 1_000_000_000_000 ? numeric / 1000 : numeric;
+  }
+  const text = readString(value)?.trim();
+  if (!text) {
+    return null;
+  }
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed / 1000 : null;
 }
 
 function normalizeLifecycleStatus(value: string | null | undefined): string | null {
@@ -390,8 +410,8 @@ export function toRawThread(value: unknown): RawThread {
       readString(record.agentRole) ??
       readString(record.agent_role) ??
       undefined,
-    createdAt: readNumber(record.createdAt) ?? undefined,
-    updatedAt: readNumber(record.updatedAt) ?? undefined,
+    createdAt: readTimestampSeconds(record.createdAt) ?? undefined,
+    updatedAt: readTimestampSeconds(record.updatedAt) ?? undefined,
     status: (record.status as RawThreadStatus) ?? undefined,
     cwd: readString(record.cwd) ?? undefined,
     source: record.source,
@@ -460,7 +480,22 @@ function toRawAcpSnapshot(value: unknown): RawAcpSnapshot | undefined {
   const config = (Array.isArray(snapshot.config) ? snapshot.config : [])
     .map(toRecord)
     .filter((entry): entry is Record<string, unknown> => entry !== null)
-    .map((entry) => ({ id: readString(entry.id) ?? '', value: readString(entry.value) ?? '' }))
+    .map((entry) => ({
+      id: readString(entry.id) ?? '',
+      value: readString(entry.value) ?? '',
+      name: readString(entry.name) ?? undefined,
+      description: readString(entry.description) ?? undefined,
+      category: readString(entry.category) ?? undefined,
+      options: (Array.isArray(entry.options) ? entry.options : [])
+        .map(toRecord)
+        .filter((option): option is Record<string, unknown> => option !== null)
+        .map((option) => ({
+          value: readString(option.value) ?? '',
+          name: readString(option.name) ?? '',
+          description: readString(option.description) ?? undefined,
+        }))
+        .filter((option) => option.value && option.name),
+    }))
     .filter((entry) => entry.id);
   const commands = (Array.isArray(snapshot.commands) ? snapshot.commands : [])
     .map(toRecord)
@@ -561,7 +596,8 @@ export function mapChatSummary(raw: RawThread): ChatSummary | null {
     return null;
   }
 
-  const createdAtSeconds = raw.createdAt ?? raw.updatedAt ?? 0;
+  const fallbackTimestampSeconds = stableThreadTimestampSeconds(raw.id);
+  const createdAtSeconds = raw.createdAt ?? raw.updatedAt ?? fallbackTimestampSeconds;
   const updatedAtSeconds = raw.updatedAt ?? raw.createdAt ?? createdAtSeconds;
   const createdAt = unixSecondsToIso(createdAtSeconds);
   const updatedAt = unixSecondsToIso(updatedAtSeconds);
@@ -574,9 +610,12 @@ export function mapChatSummary(raw: RawThread): ChatSummary | null {
   const rawTitle = raw.name?.trim() || null;
   const displayTitle = rawTitle || previewTitle || firstUserTitle;
 
+  const fallbackTitle = raw.acpSnapshot?.session.threadId
+    ? `Session ${shortSessionId(raw.acpSnapshot.session.threadId)}`
+    : `Chat ${raw.id.slice(0, 8)}`;
   return {
     id: raw.id,
-    title: toPreview(displayTitle || `Chat ${raw.id.slice(0, 8)}`),
+    title: toPreview(displayTitle || fallbackTitle),
     status: mapRawStatus(raw.status, turns),
     createdAt,
     updatedAt,
@@ -592,6 +631,19 @@ export function mapChatSummary(raw: RawThread): ChatSummary | null {
     subAgentDepth: sourceMetadata.subAgentDepth,
     lastError: lastError ?? undefined,
   };
+}
+
+function shortSessionId(value: string): string {
+  const compact = value.trim().replace(/[^a-zA-Z0-9]/g, '');
+  return compact.slice(-8) || 'new';
+}
+
+function stableThreadTimestampSeconds(threadId: string): number {
+  let hash = 0;
+  for (const character of threadId) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return 1_704_067_200 + (hash % 31_536_000);
 }
 
 function firstUserMessagePreview(turns: RawTurn[]): string | null {

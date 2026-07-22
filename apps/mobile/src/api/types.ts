@@ -77,7 +77,7 @@ export interface Chat extends ChatSummary {
   activeTurnId?: string | null;
   acpUsage?: { used: number | null; size: number | null; cost: string | null } | null;
   acpMode?: string | null;
-  acpConfig?: Array<{ id: string; value: string }>;
+  acpConfig?: AcpConfigOption[];
   acpCommands?: Array<{ name: string; description: string }>;
   acpActive?: {
     runId: string | null;
@@ -96,6 +96,22 @@ export interface CreateChatRequest {
   effort?: ReasoningEffort;
   serviceTier?: ServiceTier;
   approvalPolicy?: ApprovalPolicy;
+  collaborationMode?: CollaborationMode;
+}
+
+export interface AcpConfigOptionValue {
+  value: string;
+  name: string;
+  description?: string;
+}
+
+export interface AcpConfigOption {
+  id: string;
+  value: string;
+  name?: string;
+  description?: string;
+  category?: string;
+  options?: AcpConfigOptionValue[];
 }
 
 export type CollaborationMode = 'default' | 'plan';

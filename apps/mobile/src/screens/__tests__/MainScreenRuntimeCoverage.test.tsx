@@ -97,7 +97,7 @@ type Queryable = ReactTestInstance & {
 
 type ApiOptions = {
   capabilities?: BridgeCapabilities | Error;
-  chat?: Chat | Error;
+  chat?: Chat | Error | null;
   cachedChat?: Chat | null;
   shell?: Chat | null;
   summary?: Chat | null;
@@ -121,7 +121,7 @@ type Harness = {
 };
 
 function createApi(options: ApiOptions = {}): MockApi {
-  const loaded = options.chat ?? baseChat;
+  const loaded = options.chat === undefined ? baseChat : options.chat;
   const methods: Record<string, jest.Mock> = {
     readBridgeCapabilities: jest.fn().mockImplementation(() => {
       const value = options.capabilities ?? capabilities;
@@ -134,7 +134,7 @@ function createApi(options: ApiOptions = {}): MockApi {
     peekAllChats: jest.fn().mockReturnValue(null),
     rememberChat: jest.fn(),
     getChat: jest.fn().mockImplementation(() =>
-      loaded instanceof Error ? Promise.reject(loaded) : Promise.resolve(loaded)
+      loaded instanceof Error ? Promise.reject(loaded) : Promise.resolve(loaded ?? baseChat)
     ),
     getChatSummary: jest.fn().mockResolvedValue(baseChat),
     listLoadedChatIds: jest.fn().mockResolvedValue([]),
@@ -226,7 +226,7 @@ async function renderMain(options: {
   onHandled?: jest.Mock;
   onOpening?: jest.Mock;
 } = {}): Promise<Harness> {
-  const api = options.api ?? createApi({ chat: options.chat ?? undefined });
+  const api = options.api ?? createApi({ chat: options.chat });
   let eventHandler: ((event: unknown) => void) | null = null;
   let statusHandler: ((connected: boolean) => void) | null = null;
   const ws = {
@@ -650,6 +650,23 @@ describe('MainScreen runtime coverage', () => {
         root.findAll((node) => String(node.props.accessibilityLabel).includes('Plan')).length
       ).toBeGreaterThan(0);
     }
+    harness.unmount();
+  });
+
+  it('renders /help and its local response in the selected chat', async () => {
+    const harness = await renderMain({ chat: baseChat });
+    const root = harness.tree.root as Queryable;
+
+    act(() => (input(root).props.onChangeText as (value: string) => void)('/help'));
+    await press(root, 'Send message');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const messages = transcript(root).map((entry) => entry.message.content);
+    expect(messages).toContain('/help');
+    expect(messages.some((message) => message.includes('Supported slash commands:'))).toBe(true);
     harness.unmount();
   });
 

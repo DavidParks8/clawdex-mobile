@@ -18,6 +18,84 @@ import {
 } from '../messages';
 
 describe('chatMapping', () => {
+  it('uses bridge session titles and ISO activity timestamps for drawer summaries', () => {
+    const summary = mapChatSummary(toRawThread({
+      id: 'v1.YWdlbnQ.c2Vzc2lvbg',
+      name: 'Fix mobile session controls',
+      createdAt: '2026-07-21T14:03:00.000Z',
+      updatedAt: '2026-07-21T14:17:00.000Z',
+      cwd: '/private/tmp/tethercode-playground-18787',
+      status: { type: 'idle' },
+      turns: [],
+    }));
+
+    expect(summary).toMatchObject({
+      title: 'Fix mobile session controls',
+      createdAt: '2026-07-21T14:03:00.000Z',
+      updatedAt: '2026-07-21T14:17:00.000Z',
+    });
+  });
+
+  it('gives titleless ACP sessions readable distinct fallback labels and times', () => {
+    const first = mapChatSummary(toRawThread({
+      id: 'v1.YWdlbnQ.c2VzX2FscGhh', status: { type: 'idle' }, turns: [],
+      acpSnapshot: {
+        version: 2, messages: [], tools: [], plan: [], usage: {}, config: [], commands: [],
+        session: { agentId: 'agent', threadId: 'ses_alpha', historyReconstruction: false },
+        active: { toolIds: [] },
+      },
+    }));
+    const second = mapChatSummary(toRawThread({
+      id: 'v1.YWdlbnQ.c2VzX2JldGE', status: { type: 'idle' }, turns: [],
+      acpSnapshot: {
+        version: 2, messages: [], tools: [], plan: [], usage: {}, config: [], commands: [],
+        session: { agentId: 'agent', threadId: 'ses_beta', historyReconstruction: false },
+        active: { toolIds: [] },
+      },
+    }));
+
+    expect(first?.title).toBe('Session sesalpha');
+    expect(second?.title).toBe('Session sesbeta');
+    expect(first?.updatedAt).not.toBe(second?.updatedAt);
+  });
+
+  it('preserves advertised ACP model, effort, and primary mode options', () => {
+    const chat = mapChat(toRawThread({
+      id: 'v1.YWdlbnQ.c2Vzc2lvbg',
+      name: 'Configured OpenCode session',
+      createdAt: '2026-07-21T14:03:00.000Z',
+      updatedAt: '2026-07-21T14:17:00.000Z',
+      status: { type: 'idle' },
+      acpSnapshot: {
+        version: 2,
+        messages: [], tools: [], plan: [], usage: {}, commands: [],
+        config: [
+          {
+            id: 'model', value: 'github-copilot/gpt-5.4', name: 'Model', category: 'model',
+            options: [{ value: 'github-copilot/gpt-5.4', name: 'GitHub Copilot/GPT-5.4' }],
+          },
+          {
+            id: 'effort', value: 'high', name: 'Effort', category: 'thought_level',
+            options: [{ value: 'none', name: 'None' }, { value: 'high', name: 'High' }],
+          },
+          {
+            id: 'mode', value: 'build', name: 'Session Mode', category: 'mode',
+            options: [{ value: 'build', name: 'build' }, { value: 'plan', name: 'plan' }],
+          },
+        ],
+        session: { agentId: 'opencode', threadId: 'v1.YWdlbnQ.c2Vzc2lvbg', historyReconstruction: false },
+        active: { toolIds: [] },
+      },
+      turns: [],
+    }));
+
+    expect(chat.acpConfig).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'model', category: 'model', options: [expect.objectContaining({ value: 'github-copilot/gpt-5.4' })] }),
+      expect.objectContaining({ id: 'effort', category: 'thought_level', value: 'high' }),
+      expect.objectContaining({ id: 'mode', category: 'mode', value: 'build' }),
+    ]));
+  });
+
   it('converges snapshot and live chronology across messages, tools, reasoning, and updates', () => {
     const snapshot = mapChat(toRawThread({
       id: 'thread-order',

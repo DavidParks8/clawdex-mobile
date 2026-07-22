@@ -57,6 +57,7 @@ import type {
   UploadAttachmentRequest,
   UploadAttachmentResponse,
   ReasoningEffort,
+  ModelOption,
   RpcNotification,
   ServiceTier,
   TerminalExecRequest,
@@ -405,6 +406,59 @@ export class HostBridgeApiClient {
 
   readBridgeCapabilities(): Promise<BridgeCapabilities> {
     return this.ws.request<BridgeCapabilities>('bridge/capabilities/read');
+  }
+
+  async listModelOptions(agentId?: AgentId | null): Promise<ModelOption[]> {
+    const response = await this.ws.request<Record<string, unknown>>('model/list', {
+      agentId: agentId ?? null,
+    });
+    const entries = Array.isArray(response.data) ? response.data : [];
+    return entries
+      .map((entry) => toRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => entry !== null)
+      .map((entry) => {
+        const id = readString(entry.id)?.trim() ?? '';
+        const displayName = readString(entry.displayName)?.trim() ?? id;
+        const providerId = readString(entry.providerId)?.trim() || undefined;
+        const providerName = readString(entry.providerName)?.trim() || undefined;
+        const contextWindow = readPositiveInteger(entry.contextWindow);
+        const reasoningEffort = (Array.isArray(entry.reasoningEffort) ? entry.reasoningEffort : [])
+          .map((value) => normalizeEffort(readString(value)))
+          .filter((value): value is ReasoningEffort => value !== null)
+          .map((effort) => ({ effort }));
+        return {
+          id,
+          displayName,
+          providerId,
+          providerName,
+          contextWindow: contextWindow && contextWindow > 0 ? contextWindow : undefined,
+          reasoningEffort: reasoningEffort.length > 0 ? reasoningEffort : undefined,
+        } satisfies ModelOption;
+      })
+      .filter((entry) => entry.id.length > 0);
+  }
+
+  async setThreadConfigOption(
+    threadId: string,
+    configId: string,
+    value: string | boolean
+  ): Promise<Chat> {
+    const normalizedThreadId = threadId.trim();
+    const normalizedConfigId = configId.trim();
+    if (!normalizedThreadId || !normalizedConfigId) {
+      throw new Error('thread and config option are required');
+    }
+    const response = await this.ws.request<AppServerStartResponse>('thread/config/set', {
+      threadId: normalizedThreadId,
+      configId: normalizedConfigId,
+      value,
+    });
+    if (!response.thread) {
+      throw new Error('thread/config/set did not return a chat');
+    }
+    const chat = this.mapChatWithCachedTitle(response.thread);
+    this.rememberChat(chat);
+    return chat;
   }
 
   registerPushDevice(input: {
@@ -919,11 +973,14 @@ export class HostBridgeApiClient {
     const requestedCwd = normalizeCwd(body.cwd);
     const requestedModel = normalizeModel(body.model);
     const requestedEffort = normalizeEffort(body.effort);
+    const requestedMode = body.collaborationMode === 'plan' ? 'plan' : 'build';
     const requestedServiceTier = normalizeServiceTier(body.serviceTier);
     const requestedApprovalPolicy = normalizeApprovalPolicy(body.approvalPolicy) ?? 'untrusted';
     const started = await this.ws.request<AppServerStartResponse>('thread/start', {
       agentId: requestedAgentId ?? undefined,
       model: requestedModel ?? null,
+      effort: requestedEffort ?? null,
+      mode: requestedMode,
       modelProvider: null,
       cwd: requestedCwd ?? null,
       approvalPolicy: requestedApprovalPolicy,
@@ -965,6 +1022,8 @@ export class HostBridgeApiClient {
     const requestedAgentId = normalizeAgentId(body.agentId);
     const requestedCwd = normalizeCwd(body.cwd);
     const requestedModel = normalizeModel(body.model);
+    const requestedEffort = normalizeEffort(body.effort);
+    const requestedMode = body.collaborationMode === 'plan' ? 'plan' : 'build';
     const requestedServiceTier = normalizeServiceTier(body.serviceTier);
     const requestedApprovalPolicy = normalizeApprovalPolicy(body.approvalPolicy) ?? 'untrusted';
     const started = await this.ws.request<BridgeThreadCreateResponse>('bridge/thread/create', {
@@ -972,6 +1031,8 @@ export class HostBridgeApiClient {
       threadStart: {
         agentId: requestedAgentId ?? undefined,
         model: requestedModel ?? null,
+        effort: requestedEffort ?? null,
+        mode: requestedMode,
         modelProvider: null,
         cwd: requestedCwd ?? null,
         approvalPolicy: requestedApprovalPolicy,
@@ -2107,6 +2168,17 @@ function normalizeModel(model: string | null | undefined): string | null {
 
   const trimmed = model.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readPositiveInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value);
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
 }
 
 function normalizeEffort(effort: string | null | undefined): ReasoningEffort | null {

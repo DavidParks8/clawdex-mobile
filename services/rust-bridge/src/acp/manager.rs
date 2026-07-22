@@ -1,15 +1,19 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
     ElicitationContentValue, ListSessionsRequest, LoadSessionRequest, NewSessionRequest,
-    PromptRequest, ResumeSessionRequest, SessionId,
+    PromptRequest, ResumeSessionRequest, SessionConfigOptionValue, SessionId,
+    SetSessionConfigOptionRequest,
 };
+use async_process::Command as AsyncCommand;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use chrono::{SecondsFormat, TimeZone, Utc};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -18,9 +22,10 @@ use uuid::Uuid;
 use crate::storage::atomic_write_private;
 
 use super::config::ResolvedAgentManifest;
-#[cfg(test)]
-use super::events::CanonicalEvent;
-use super::events::{canonical_event_channel, CanonicalEventReceiver, CanonicalEventSender};
+use super::events::{
+    canonical_event_channel, CanonicalEvent, CanonicalEventReceiver, CanonicalEventSender,
+    FieldUpdate,
+};
 use super::identity::AgentSessionId;
 use super::interactions::{PendingElicitationSummary, PendingPermissionSummary};
 use super::runtime::{
@@ -38,6 +43,10 @@ const SESSION_INDEX_VERSION: u64 = 2;
 const MAX_SESSION_INDEX_BYTES: usize = 256 * 1024;
 const MAX_SESSION_CWD_BYTES: usize = 4_096;
 const SESSION_INDEX_FILE: &str = "session-index.json";
+const OPENCODE_SESSION_CATALOG_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_OPENCODE_SESSION_CATALOG_BYTES: usize = 256 * 1024;
+const OPENCODE_MODEL_CATALOG_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_OPENCODE_MODEL_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 
 pub type AgentId = String;
 type AgentStartResult = (
@@ -215,6 +224,53 @@ pub struct ManagedSession {
     pub snapshot: SessionSnapshot,
 }
 
+#[derive(Debug, Deserialize)]
+struct OpenCodeSessionCatalogRow {
+    id: String,
+    title: Option<String>,
+    updated: Option<u64>,
+    created: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct OpenCodeSessionSummary {
+    title: Option<String>,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeModelCatalogEntry {
+    pub id: String,
+    pub display_name: String,
+    pub provider_id: String,
+    pub provider_name: String,
+    pub context_window: Option<u64>,
+    pub reasoning_effort: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenCodeModelCatalogDocument {
+    id: String,
+    #[serde(rename = "providerID")]
+    provider_id: String,
+    name: String,
+    limit: Option<OpenCodeModelLimit>,
+    capabilities: Option<OpenCodeModelCapabilities>,
+    variants: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenCodeModelLimit {
+    context: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenCodeModelCapabilities {
+    reasoning: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedSessionPage {
@@ -376,6 +432,28 @@ fn empty_managed_session(identity: &AgentSessionId, cwd: PathBuf) -> ManagedSess
         agent_id: identity.agent_id.clone(),
         cwd,
         snapshot: SessionSnapshot::new(identity.agent_id.clone(), thread_id),
+    }
+}
+
+fn listed_managed_session(
+    identity: &AgentSessionId,
+    cwd: PathBuf,
+    title: Option<String>,
+    updated_at: Option<String>,
+) -> ManagedSession {
+    let thread_id = identity.encode();
+    let mut snapshot = SessionSnapshot::new(identity.agent_id.clone(), thread_id.clone());
+    snapshot.apply(&CanonicalEvent::SessionInfo {
+        agent_id: identity.agent_id.clone(),
+        thread_id: thread_id.clone(),
+        title: title.map_or(FieldUpdate::Unchanged, FieldUpdate::Set),
+        updated_at: updated_at.map_or(FieldUpdate::Unchanged, FieldUpdate::Set),
+    });
+    ManagedSession {
+        thread_id,
+        agent_id: identity.agent_id.clone(),
+        cwd,
+        snapshot,
     }
 }
 
@@ -578,10 +656,50 @@ impl AgentManager {
         descriptors
     }
 
+    pub async fn opencode_model_catalog(
+        &self,
+        agent_id: Option<&str>,
+    ) -> Vec<OpenCodeModelCatalogEntry> {
+        let Some(runtime) = agent_id
+            .and_then(|agent_id| self.agents.get(agent_id))
+            .or_else(|| self.agents.get("opencode"))
+        else {
+            return Vec::new();
+        };
+        if runtime.manifest.resolved.agent_id != "opencode"
+            || runtime.manifest.resolved.argv != ["acp"]
+        {
+            return Vec::new();
+        }
+        let mut command = AsyncCommand::new(&runtime.manifest.resolved.executable);
+        command
+            .args(["models", "--verbose"])
+            .current_dir(&self.workspace_root)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        for name in ["PATH", "HOME", "TMPDIR", "LANG", "XDG_CONFIG_HOME"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        let Ok(Ok(output)) =
+            tokio::time::timeout(OPENCODE_MODEL_CATALOG_TIMEOUT, command.output()).await
+        else {
+            return Vec::new();
+        };
+        if !output.status.success() || output.stdout.len() > MAX_OPENCODE_MODEL_CATALOG_BYTES {
+            return Vec::new();
+        }
+        parse_opencode_model_catalog(&output.stdout)
+    }
+
     pub async fn take_events(&self) -> Option<CanonicalEventReceiver> {
         self.event_receiver.lock().await.take()
     }
 
+    #[cfg(test)]
     pub async fn new_session(
         &self,
         agent_id: &str,
@@ -603,14 +721,16 @@ impl AgentManager {
         let response = connection
             .new_session_with_cancellation(request, cancellation)
             .await?;
+        let session_id = response.session_id.clone();
         self.track_session(
-            AgentSessionId::new(agent_id, response.session_id.to_string())
+            AgentSessionId::new(agent_id, session_id.to_string())
                 .map_err(|_| AgentManagerError::InvalidThreadId)?,
             cwd,
         )
         .await?;
-        self.read_known_session(agent_id, &response.session_id)
-            .await
+        self.apply_config_options(connection, &session_id, response.config_options)
+            .await?;
+        self.read_known_session(agent_id, &session_id).await
     }
 
     #[cfg(test)]
@@ -642,6 +762,7 @@ impl AgentManager {
                 continue;
             }
             let runtime = &self.agents[&agent_id];
+            let opencode_summaries = self.opencode_session_summaries(runtime).await;
             let Some(connection) = &runtime.connection else {
                 add_durable_sessions(&mut sessions, &durable, &agent_id);
                 continue;
@@ -672,9 +793,17 @@ impl AgentManager {
                         {
                             if let Ok(cwd) = self.validate_cwd(&remote.cwd) {
                                 discovered.push(index_entry(identity.clone(), cwd.clone()));
-                                sessions
-                                    .entry(identity.encode())
-                                    .or_insert_with(|| empty_managed_session(&identity, cwd));
+                                let opencode_summary = opencode_summaries
+                                    .get(&remote.session_id.to_string().to_ascii_lowercase());
+                                let title = remote.title.clone().or_else(|| {
+                                    opencode_summary.and_then(|summary| summary.title.clone())
+                                });
+                                let updated_at = remote.updated_at.clone().or_else(|| {
+                                    opencode_summary.and_then(|summary| summary.updated_at.clone())
+                                });
+                                sessions.entry(identity.encode()).or_insert_with(|| {
+                                    listed_managed_session(&identity, cwd, title, updated_at)
+                                });
                             }
                         }
                     }
@@ -792,18 +921,41 @@ impl AgentManager {
     ) -> Result<ManagedSession, AgentManagerError> {
         let (identity, session_id, connection) = self.route_thread(thread_id)?;
         let cwd = self.validate_cwd(&cwd.into())?;
-        if connection.negotiated().supports_session_resume() {
+        let config_options = if connection.negotiated().supports_session_resume() {
             connection
                 .resume_session(ResumeSessionRequest::new(session_id.clone(), cwd.clone()))
-                .await?;
+                .await?
+                .config_options
         } else if connection.negotiated().supports_session_load() {
             connection
                 .load_session(LoadSessionRequest::new(session_id.clone(), cwd.clone()))
-                .await?;
+                .await?
+                .config_options
         } else {
             return Err(AcpRuntimeError::Unsupported("session/resume or session/load").into());
-        }
+        };
         self.track_session(identity, cwd).await?;
+        self.apply_config_options(connection, &session_id, config_options)
+            .await?;
+        self.read_known_session_from(connection, &session_id).await
+    }
+
+    pub async fn set_session_config_option(
+        &self,
+        thread_id: &str,
+        config_id: &str,
+        value: SessionConfigOptionValue,
+    ) -> Result<ManagedSession, AgentManagerError> {
+        let (_, session_id, connection) = self.route_thread(thread_id)?;
+        let response = connection
+            .set_session_config_option(SetSessionConfigOptionRequest::new(
+                session_id.clone(),
+                config_id.to_string(),
+                value,
+            ))
+            .await?;
+        self.apply_config_options(connection, &session_id, Some(response.config_options))
+            .await?;
         self.read_known_session_from(connection, &session_id).await
     }
 
@@ -840,20 +992,24 @@ impl AgentManager {
             };
             if requires_reconstruction {
                 let cwd = self.validate_cwd(&entry.cwd)?;
-                if connection.negotiated().supports_session_resume() {
+                let config_options = if connection.negotiated().supports_session_resume() {
                     connection
                         .resume_session(ResumeSessionRequest::new(session_id.clone(), cwd))
-                        .await?;
+                        .await?
+                        .config_options
                 } else if connection.negotiated().supports_session_load() {
                     connection
                         .load_session(LoadSessionRequest::new(session_id.clone(), cwd))
-                        .await?;
+                        .await?
+                        .config_options
                 } else {
                     return Err(
                         AcpRuntimeError::Unsupported("session/resume or session/load").into(),
                     );
-                }
+                };
                 self.register_session_events(&identity).await;
+                self.apply_config_options(connection, &session_id, config_options)
+                    .await?;
             }
         }
         self.read_known_session_from(connection, &session_id).await
@@ -1195,6 +1351,80 @@ impl AgentManager {
             .await
     }
 
+    async fn opencode_session_summaries(
+        &self,
+        runtime: &AgentRuntime,
+    ) -> HashMap<String, OpenCodeSessionSummary> {
+        if runtime.manifest.resolved.agent_id != "opencode"
+            || runtime.manifest.resolved.argv != ["acp"]
+        {
+            return HashMap::new();
+        }
+        let mut command = AsyncCommand::new(&runtime.manifest.resolved.executable);
+        command
+            .args(["session", "list", "--format", "json", "--max-count", "100"])
+            .current_dir(&self.workspace_root)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        for name in ["PATH", "HOME", "TMPDIR", "LANG", "XDG_CONFIG_HOME"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        let Ok(Ok(output)) =
+            tokio::time::timeout(OPENCODE_SESSION_CATALOG_TIMEOUT, command.output()).await
+        else {
+            return HashMap::new();
+        };
+        if !output.status.success() || output.stdout.len() > MAX_OPENCODE_SESSION_CATALOG_BYTES {
+            return HashMap::new();
+        }
+        let Ok(rows) = serde_json::from_slice::<Vec<OpenCodeSessionCatalogRow>>(&output.stdout)
+        else {
+            return HashMap::new();
+        };
+        rows.into_iter()
+            .filter_map(|row| {
+                let id = row.id.trim().to_ascii_lowercase();
+                if id.is_empty() || id.len() > 1_024 {
+                    return None;
+                }
+                let title = row.title.and_then(|title| {
+                    let title = title.trim();
+                    (!title.is_empty() && title.len() <= 512).then(|| title.to_string())
+                });
+                let updated_at = row.updated.or(row.created).and_then(milliseconds_to_iso);
+                Some((id, OpenCodeSessionSummary { title, updated_at }))
+            })
+            .collect()
+    }
+
+    async fn apply_config_options(
+        &self,
+        connection: &AcpConnection,
+        session_id: &SessionId,
+        config_options: Option<Vec<agent_client_protocol::schema::v1::SessionConfigOption>>,
+    ) -> Result<(), AgentManagerError> {
+        let Some(config_options) = config_options.filter(|options| !options.is_empty()) else {
+            return Ok(());
+        };
+        let session = connection
+            .session(session_id)
+            .await
+            .ok_or_else(|| AcpRuntimeError::UnknownSession(session_id.to_string()))?;
+        let snapshot = session.snapshot().await;
+        session
+            .emit(CanonicalEvent::Config {
+                agent_id: snapshot.agent_id,
+                thread_id: snapshot.thread_id,
+                entries: super::handlers::config_entries(config_options),
+            })
+            .await;
+        Ok(())
+    }
+
     async fn read_known_session_from(
         &self,
         connection: &AcpConnection,
@@ -1229,6 +1459,109 @@ impl AgentManager {
             cwd,
             snapshot,
         })
+    }
+}
+
+fn milliseconds_to_iso(milliseconds: u64) -> Option<String> {
+    let milliseconds = i64::try_from(milliseconds).ok()?;
+    Utc.timestamp_millis_opt(milliseconds)
+        .single()
+        .map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true))
+}
+
+fn parse_opencode_model_catalog(bytes: &[u8]) -> Vec<OpenCodeModelCatalogEntry> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    let mut models = Vec::new();
+    let mut object_start: Option<usize> = None;
+    let mut depth = 0usize;
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        let byte_offset = text
+            .lines()
+            .take(index)
+            .map(|previous| previous.len() + 1)
+            .sum::<usize>();
+        if object_start.is_none() && trimmed.starts_with('{') {
+            object_start = Some(byte_offset);
+            depth = 0;
+        }
+        if object_start.is_some() {
+            depth = depth.saturating_add(trimmed.bytes().filter(|byte| *byte == b'{').count());
+            depth = depth.saturating_sub(trimmed.bytes().filter(|byte| *byte == b'}').count());
+            if depth == 0 {
+                let start = object_start.take().unwrap_or(byte_offset);
+                let end = byte_offset.saturating_add(line.len());
+                if let Ok(document) =
+                    serde_json::from_str::<OpenCodeModelCatalogDocument>(&text[start..end])
+                {
+                    let id = format!("{}/{}", document.provider_id, document.id);
+                    let display_name = if document.name.trim().is_empty() {
+                        id.clone()
+                    } else {
+                        document.name
+                    };
+                    let reasoning_effort = if document
+                        .capabilities
+                        .as_ref()
+                        .and_then(|capabilities| capabilities.reasoning)
+                        .unwrap_or(false)
+                    {
+                        document
+                            .variants
+                            .unwrap_or_default()
+                            .into_keys()
+                            .filter(|value| {
+                                matches!(
+                                    value.as_str(),
+                                    "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+                                )
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    models.push(OpenCodeModelCatalogEntry {
+                        id,
+                        display_name,
+                        provider_id: document.provider_id.clone(),
+                        provider_name: document.provider_id,
+                        context_window: document.limit.and_then(|limit| limit.context),
+                        reasoning_effort,
+                    });
+                }
+            }
+        }
+    }
+    models.sort_by(|left, right| left.display_name.cmp(&right.display_name));
+    models.truncate(128);
+    models
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    #[test]
+    fn parses_opencode_verbose_model_catalog() {
+        let catalog = parse_opencode_model_catalog(
+            br#"opencode/demo
+{
+  "id": "demo",
+  "providerID": "opencode",
+  "name": "Demo Model",
+  "limit": { "context": 200000 },
+  "capabilities": { "reasoning": true },
+  "variants": { "high": { "reasoningEffort": "high" }, "max": {} }
+}
+"#,
+        );
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].id, "opencode/demo");
+        assert_eq!(catalog[0].display_name, "Demo Model");
+        assert_eq!(catalog[0].context_window, Some(200000));
+        assert_eq!(catalog[0].reasoning_effort, vec!["high"]);
     }
 }
 
@@ -2053,6 +2386,54 @@ mod tests {
             1
         );
         assert_eq!(manager.loaded_session_ids().await, vec![created.thread_id]);
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn manager_preserves_remote_session_summary_metadata() {
+        let agent = Agent
+            .builder()
+            .on_receive_request(
+                async move |request: InitializeRequest, responder, _| {
+                    responder.respond(
+                        InitializeResponse::new(request.protocol_version).agent_capabilities(
+                            AgentCapabilities::new().session_capabilities(
+                                SessionCapabilities::new().list(SessionListCapabilities::new()),
+                            ),
+                        ),
+                    )
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                async move |_request: ListSessionsRequest, responder, _| {
+                    responder.respond(ListSessionsResponse::new(vec![SessionInfo::new(
+                        "summary-session",
+                        "/tmp",
+                    )
+                    .title("Real session title")
+                    .updated_at("2026-07-21T14:17:00Z")]))
+                },
+                agent_client_protocol::on_receive_request!(),
+            );
+        let (connection, negotiated) =
+            AcpConnection::start_transport("alpha".to_string(), agent, Duration::from_secs(1))
+                .await
+                .expect("summary agent starts");
+        let manager = AgentManager::from_start_results(
+            "alpha".to_string(),
+            vec![(manifest("alpha", "Alpha"), Ok((connection, negotiated)))],
+        )
+        .await
+        .expect("manager starts");
+
+        let page = manager
+            .list_sessions(None, 10)
+            .await
+            .expect("list succeeds");
+        let summary = &page.sessions[0].snapshot;
+        assert_eq!(summary.title.as_deref(), Some("Real session title"));
+        assert_eq!(summary.updated_at.as_deref(), Some("2026-07-21T14:17:00Z"));
         manager.shutdown().await;
     }
 

@@ -10,7 +10,7 @@ use agent_client_protocol::schema::v1::{
     InitializeRequest, InitializeResponse, ListSessionsRequest, ListSessionsResponse,
     LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
     RequestPermissionRequest, ResumeSessionRequest, ResumeSessionResponse, SessionId,
-    SessionNotification,
+    SessionNotification, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Client, ConnectTo, JsonRpcRequest, JsonRpcResponse};
@@ -441,6 +441,19 @@ impl AcpConnection {
         .await
     }
 
+    pub async fn set_session_config_option(
+        &self,
+        request: SetSessionConfigOptionRequest,
+    ) -> Result<SetSessionConfigOptionResponse, AcpRuntimeError> {
+        if self.sessions.get(&request.session_id).await.is_none() {
+            return Err(AcpRuntimeError::UnknownSession(
+                request.session_id.to_string(),
+            ));
+        }
+        self.call(|response| Command::SetSessionConfigOption { request, response })
+            .await
+    }
+
     pub async fn cancel(
         &self,
         session_id: agent_client_protocol::schema::v1::SessionId,
@@ -700,6 +713,10 @@ enum Command {
         source_turn_id: String,
         response: oneshot::Sender<Result<PromptAdmission, AcpRuntimeError>>,
     },
+    SetSessionConfigOption {
+        request: SetSessionConfigOptionRequest,
+        response: oneshot::Sender<Result<SetSessionConfigOptionResponse, AcpRuntimeError>>,
+    },
     Cancel {
         session_id: agent_client_protocol::schema::v1::SessionId,
         response: oneshot::Sender<Result<(), AcpRuntimeError>>,
@@ -945,6 +962,36 @@ impl Command {
                         let _ = response.send(Err(AcpRuntimeError::Connection(error.to_string())));
                     }
                 }
+            }
+            Self::SetSessionConfigOption { request, response } => {
+                let session_id = request.session_id.clone();
+                let Some(session) = sessions.get(&session_id).await else {
+                    let _ =
+                        response.send(Err(AcpRuntimeError::UnknownSession(session_id.to_string())));
+                    return;
+                };
+                dispatch_ordinary!(
+                    request,
+                    RequestCancellation::default(),
+                    response,
+                    move |result: Result<SetSessionConfigOptionResponse, AcpRuntimeError>,
+                          _: SessionRegistry,
+                          agent_id: String| async move {
+                        if let Ok(value) = &result {
+                            let snapshot = session.snapshot().await;
+                            session
+                                .emit(CanonicalEvent::Config {
+                                    agent_id,
+                                    thread_id: snapshot.thread_id,
+                                    entries: super::handlers::config_entries(
+                                        value.config_options.clone(),
+                                    ),
+                                })
+                                .await;
+                        }
+                        result
+                    }
+                );
             }
             Self::Cancel {
                 session_id,

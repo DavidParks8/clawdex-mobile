@@ -275,6 +275,18 @@ pub struct PlanEntry {
 pub struct ConfigEntry {
     pub id: String,
     pub value: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub options: Vec<ConfigOptionValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigOptionValue {
+    pub value: String,
+    pub name: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

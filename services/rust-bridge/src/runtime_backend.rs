@@ -8,6 +8,7 @@ use std::{
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, ElicitationContentValue, NewSessionRequest, ResourceLink,
+    SessionConfigOptionValue,
 };
 use futures_util::future::BoxFuture;
 
@@ -387,15 +388,8 @@ impl RuntimeBackend {
         let params = params.unwrap_or_else(|| json!({}));
         match method {
             "thread/start" => {
-                let agent_id = read_string(params.get("agentId"))
-                    .unwrap_or_else(|| self.manager.preferred_agent_id().to_string());
-                let cwd = read_string(params.get("cwd")).unwrap_or_else(|| ".".to_string());
-                let session = self
-                    .manager
-                    .new_session(&agent_id, NewSessionRequest::new(cwd))
+                self.start_thread(params, RequestCancellation::default())
                     .await
-                    .map_err(|error| error.to_string())?;
-                Ok(json!({ "thread": session_to_thread_value(session)? }))
             }
             "thread/list" => {
                 let cursor = read_string(params.get("cursor"));
@@ -452,6 +446,25 @@ impl RuntimeBackend {
                     .map_err(|error| error.to_string())?;
                 Ok(json!({ "thread": session_to_thread_value(session)? }))
             }
+            "thread/config/set" => {
+                let thread_id = required_string(&params, "threadId")?;
+                let config_id = required_string(&params, "configId")?;
+                let value = match params.get("value") {
+                    Some(Value::Bool(value)) => SessionConfigOptionValue::boolean(*value),
+                    Some(Value::String(value)) if !value.trim().is_empty() => {
+                        SessionConfigOptionValue::value_id(value.trim().to_string())
+                    }
+                    _ => {
+                        return Err("config value must be a non-empty string or boolean".to_string())
+                    }
+                };
+                let session = self
+                    .manager
+                    .set_session_config_option(&thread_id, &config_id, value)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                Ok(json!({ "thread": session_to_thread_value(session)? }))
+            }
             "turn/start" => {
                 let thread_id = required_string(&params, "threadId")?;
                 let prompt = bridge_prompt(&params)?;
@@ -476,12 +489,65 @@ impl RuntimeBackend {
                 Ok(json!({ "ok": true }))
             }
             "model/list" => Ok(json!({
-                "data": [],
-                "unsupported": true,
-                "source": "acpSessionConfig"
+                "data": self.manager.opencode_model_catalog(read_string(params.get("agentId")).as_deref()).await,
+                "source": "opencodeCatalog",
             })),
             _ => Err(format!("method not supported by ACP runtime: {method}")),
         }
+    }
+
+    async fn start_thread(
+        &self,
+        params: Value,
+        cancellation: RequestCancellation,
+    ) -> Result<Value, String> {
+        let agent_id = read_string(params.get("agentId"))
+            .unwrap_or_else(|| self.manager.preferred_agent_id().to_string());
+        let cwd = read_string(params.get("cwd")).unwrap_or_else(|| ".".to_string());
+        let model = read_string(params.get("model"));
+        let effort = read_string(params.get("effort"));
+        let mode = read_string(params.get("mode")).map(|value| {
+            if value == "default" {
+                "build".to_string()
+            } else {
+                value
+            }
+        });
+        let mut session = self
+            .manager
+            .new_session_with_cancellation(&agent_id, NewSessionRequest::new(cwd), cancellation)
+            .await
+            .map_err(|error| error.to_string())?;
+        for (category, value) in [("model", model), ("thought_level", effort), ("mode", mode)] {
+            let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+                continue;
+            };
+            let Some(option) = session
+                .snapshot
+                .config
+                .iter()
+                .find(|option| option.category.as_deref() == Some(category))
+            else {
+                continue;
+            };
+            if !option.options.is_empty()
+                && !option.options.iter().any(|choice| choice.value == value)
+            {
+                return Err(format!(
+                    "{category} option is not advertised by this ACP agent"
+                ));
+            }
+            session = self
+                .manager
+                .set_session_config_option(
+                    &session.thread_id,
+                    &option.id,
+                    SessionConfigOptionValue::value_id(value),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(json!({ "thread": session_to_thread_value(session)? }))
     }
 
     pub(super) async fn request_for_client(
@@ -493,20 +559,9 @@ impl RuntimeBackend {
         self.client_requests
             .run_with(client_id, |cancellation| async move {
                 if method == "thread/start" {
-                    let params = params.unwrap_or_else(|| json!({}));
-                    let agent_id = read_string(params.get("agentId"))
-                        .unwrap_or_else(|| self.manager.preferred_agent_id().to_string());
-                    let cwd = read_string(params.get("cwd")).unwrap_or_else(|| ".".to_string());
-                    let session = self
-                        .manager
-                        .new_session_with_cancellation(
-                            &agent_id,
-                            NewSessionRequest::new(cwd),
-                            cancellation,
-                        )
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    return Ok(json!({ "thread": session_to_thread_value(session)? }));
+                    return self
+                        .start_thread(params.unwrap_or_else(|| json!({})), cancellation)
+                        .await;
                 }
                 self.request_internal(method, params).await
             })
@@ -772,11 +827,15 @@ fn required_string(params: &Value, name: &str) -> Result<String, String> {
 
 fn session_to_thread_value(session: crate::acp::manager::ManagedSession) -> Result<Value, String> {
     let snapshot = crate::acp::snapshot::BridgeThreadSnapshot::from(session.snapshot);
+    let title = snapshot.session.title.clone();
+    let updated_at = snapshot.session.updated_at.clone();
     Ok(json!({
         "id": session.thread_id,
         "agentId": session.agent_id,
         "cwd": session.cwd,
-        "name": snapshot.session.title,
+        "name": title,
+        "createdAt": updated_at.clone(),
+        "updatedAt": updated_at,
         "acpSnapshot": snapshot,
     }))
 }

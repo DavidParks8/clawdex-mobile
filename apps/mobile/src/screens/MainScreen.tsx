@@ -12,7 +12,6 @@ import {
 import {
   AppState,
   ActivityIndicator,
-  Alert,
   Dimensions,
   type FlatList,
   Keyboard,
@@ -42,6 +41,7 @@ import type {
   BridgeQueuedMessage,
   BridgeThreadQueueState,
   CollaborationMode,
+  AcpConfigOption,
   PendingApproval,
   PendingUserInputRequest,
   RpcNotification,
@@ -774,9 +774,17 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
     const activeSlashCommands = SLASH_COMMANDS.filter((command) =>
       isSlashCommandAvailable(command, slashCommandAvailability)
     );
-    const modelOptions = activeAgentId
+    const activeAcpConfig = selectedChat?.acpConfig ?? [];
+    const modelConfig = activeAcpConfig.find((option) => option.category === 'model') ?? null;
+    const effortConfig = activeAcpConfig.find((option) => option.category === 'thought_level') ?? null;
+    const modeConfig = activeAcpConfig.find((option) => option.category === 'mode') ?? null;
+    const snapshotModelOptions = modelOptionsFromAcpConfig(activeAcpConfig);
+    const catalogModelOptions = activeAgentId
       ? modelOptionsByAgent[activeAgentId] ?? EMPTY_MODEL_OPTIONS
       : EMPTY_MODEL_OPTIONS;
+    const modelOptions = snapshotModelOptions.length > 0
+      ? mergeModelOptions(catalogModelOptions, snapshotModelOptions)
+      : catalogModelOptions;
     const pendingAgentDefaults = selectedNewAgentId
       ? agentSettings?.[selectedNewAgentId] ?? null
       : null;
@@ -1939,7 +1947,9 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             ? formatReasoningEffort(activeEffort)
             : 'Model default';
     const modelReasoningLabel = `${activeModelLabel} · ${activeEffortLabel}`;
-    const collaborationModeLabel = formatCollaborationModeLabel(selectedCollaborationMode);
+    const collaborationModeLabel = modeConfig?.options?.find(
+      (option) => option.value === modeConfig.value
+    )?.name ?? modeConfig?.value ?? formatCollaborationModeLabel(selectedCollaborationMode);
     const hasPendingServiceTierChange =
       Boolean(selectedChatId) && appliedServiceTierForSelectedChat !== activeServiceTier;
     const fastModeLabel = hasPendingServiceTierChange
@@ -2555,11 +2565,27 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       const requestId = modelOptionsRequestRef.current + 1;
       modelOptionsRequestRef.current = requestId;
       setLoadingModels(true);
-      if (modelOptionsRequestRef.current === requestId) {
-        setModelOptionsByAgent({});
-        setLoadingModels(false);
+      try {
+        const catalogModels = await api.listModelOptions(activeAgentId);
+        if (modelOptionsRequestRef.current !== requestId) {
+          return;
+        }
+        if (activeAgentId) {
+          setModelOptionsByAgent((previous) => ({
+            ...previous,
+            [activeAgentId]: Array.isArray(catalogModels) ? catalogModels : EMPTY_MODEL_OPTIONS,
+          }));
+        }
+      } catch (err) {
+        if (modelOptionsRequestRef.current === requestId) {
+          setError((err as Error).message);
+        }
+      } finally {
+        if (modelOptionsRequestRef.current === requestId) {
+          setLoadingModels(false);
+        }
       }
-    }, []);
+    }, [activeAgentId, api]);
 
     const openModelModal = useCallback(() => {
       setModelModalVisible(true);
@@ -2604,8 +2630,32 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       setEffortModalVisible(false);
     }, []);
 
+    const applyAcpConfigOption = useCallback(
+      async (config: AcpConfigOption | null, value: string): Promise<Chat | null> => {
+        if (!selectedChatId || !config) {
+          return null;
+        }
+        try {
+          const updated = await api.setThreadConfigOption(selectedChatId, config.id, value);
+          setSelectedChat(updated);
+          return updated;
+        } catch (err) {
+          setError((err as Error).message);
+          return null;
+        }
+      },
+      [api, selectedChatId]
+    );
+
     const selectEffort = useCallback(
-      (effort: ReasoningEffort | null) => {
+      async (effort: ReasoningEffort | null) => {
+        const value = effort ?? effortConfig?.value;
+        if (effortConfig && value) {
+          const updated = await applyAcpConfigOption(effortConfig, value);
+          if (!updated) {
+            return;
+          }
+        }
         setSelectedEffort(effort);
         setEffortModalVisible(false);
         setError(null);
@@ -2618,12 +2668,25 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           );
         }
       },
-      [activeModelId, activeServiceTier, rememberChatModelPreference, selectedChatId]
+      [
+        activeModelId,
+        activeServiceTier,
+        applyAcpConfigOption,
+        effortConfig,
+        rememberChatModelPreference,
+        selectedChatId,
+      ]
     );
 
     const selectModel = useCallback(
-      (modelId: string | null) => {
+      async (modelId: string | null) => {
         const normalizedModelId = normalizeModelId(modelId);
+        if (normalizedModelId && modelConfig) {
+          const updated = await applyAcpConfigOption(modelConfig, normalizedModelId);
+          if (!updated) {
+            return;
+          }
+        }
         setSelectedModelId(normalizedModelId);
         setSelectedEffort(null);
         setModelModalVisible(false);
@@ -2645,7 +2708,14 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           }
         }
       },
-      [activeServiceTier, modelOptions, rememberChatModelPreference, selectedChatId]
+      [
+        activeServiceTier,
+        applyAcpConfigOption,
+        modelConfig,
+        modelOptions,
+        rememberChatModelPreference,
+        selectedChatId,
+      ]
     );
 
     const selectPendingAgent = useCallback((agentId: AgentId) => {
@@ -2768,12 +2838,39 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
 
     const collaborationModeOptions = useMemo<SelectionSheetOption[]>(
       () => {
-        const setMode = (mode: CollaborationMode) => {
+        const setMode = async (mode: CollaborationMode, acpMode: string) => {
+          if (modeConfig) {
+            const updated = await applyAcpConfigOption(modeConfig, acpMode);
+            if (!updated) {
+              return;
+            }
+          }
           setSelectedCollaborationMode(mode);
           setCollaborationModeMenuVisible(false);
           setError(null);
         };
 
+        const advertisedModes = modeConfig?.options ?? [];
+        if (advertisedModes.length > 0) {
+          return advertisedModes.map((option) => {
+            const mode: CollaborationMode = option.value === 'plan' ? 'plan' : 'default';
+            return {
+              key: option.value,
+              title: option.name,
+              description: option.description ?? (
+                mode === 'plan'
+                  ? 'Plan the work before execution.'
+                  : 'Use this primary OpenCode agent mode for the next turn.'
+              ),
+              icon: mode === 'plan' ? 'git-branch-outline' as const : 'chatbubble-ellipses-outline' as const,
+              selected: modeConfig?.value === option.value,
+              onPress: () => { void setMode(mode, option.value); },
+            } satisfies SelectionSheetOption;
+          });
+        }
+        if (selectedChatId) {
+          return [];
+        }
         return [
           {
             key: 'default',
@@ -2781,7 +2878,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             description: 'Answer directly and keep the turn moving.',
             icon: 'chatbubble-ellipses-outline' as const,
             selected: selectedCollaborationMode === 'default',
-            onPress: () => setMode('default'),
+            onPress: () => { void setMode('default', 'build'); },
           },
           {
             key: 'plan',
@@ -2789,15 +2886,40 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             description: 'Pause to ask structured follow-up questions before execution.',
             icon: 'git-branch-outline' as const,
             selected: selectedCollaborationMode === 'plan',
-            onPress: () => setMode('plan'),
+            onPress: () => { void setMode('plan', 'plan'); },
           },
         ];
       },
-      [selectedCollaborationMode]
+      [applyAcpConfigOption, modeConfig, selectedCollaborationMode]
     );
 
     const modelSettingsMenuOptions = useMemo<SelectionSheetOption[]>(
       () => [
+        ...(modelOptions.length > 0
+          ? [
+              {
+                key: 'model',
+                title: 'Change model',
+                description: activeModelLabel,
+                icon: 'sparkles-outline' as const,
+                onPress: () => {
+                  setModelSettingsMenuVisible(false);
+                  openModelModal();
+                },
+              },
+              {
+                key: 'reasoning',
+                title: 'Thinking level',
+                description: activeEffortLabel,
+                icon: 'pulse-outline' as const,
+                disabled: activeModelEffortOptions.length === 0,
+                onPress: () => {
+                  setModelSettingsMenuVisible(false);
+                  openEffortModal();
+                },
+              },
+            ]
+          : []),
         ...(!selectedChatId && readyAgents.length > 1
           ? [
               {
@@ -2816,6 +2938,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
       [
         activeEffortLabel,
         activeModelLabel,
+        activeModelEffortOptions.length,
         collaborationModeLabel,
         fastModeEnabled,
         openEffortModal,
@@ -2853,7 +2976,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           icon: 'sparkles-outline',
           badge: 'Auto',
           selected: selectedModelId === null || selectedModel === null,
-          onPress: () => selectModel(null),
+          onPress: () => { void selectModel(null); },
         },
         ...modelOptions.map((model) => ({
           key: model.id,
@@ -2865,7 +2988,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             ? formatReasoningEffort(model.defaultReasoningEffort)
             : undefined,
           selected: model.id === selectedModelId,
-          onPress: () => selectModel(model.id),
+          onPress: () => { void selectModel(model.id); },
         })),
       ],
       [modelOptions, selectModel, selectedModel, selectedModelId, serverDefaultModel]
@@ -2884,7 +3007,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           icon: 'sparkles-outline',
           badge: 'Auto',
           selected: selectedEffort === null,
-          onPress: () => selectEffort(null),
+          onPress: () => { void selectEffort(null); },
         },
         ...effortPickerOptions.map((option) => ({
           key: option.effort,
@@ -2894,7 +3017,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             'Override the model default for the next response.',
           icon: 'pulse-outline' as const,
           selected: option.effort === selectedEffort,
-          onPress: () => selectEffort(option.effort),
+          onPress: () => { void selectEffort(option.effort); },
         })),
       ],
       [
@@ -2907,30 +3030,34 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
     );
 
     const appendLocalAssistantMessage = useCallback(
-      (content: string, title = 'Command result') => {
+      (content: string, targetChatId?: string | null) => {
         const normalized = content.trim();
         if (!normalized) {
           return;
         }
 
-        if (!selectedChatId) {
-          Alert.alert(title, normalized);
+        const chatId = targetChatId ?? selectedChatIdRef.current;
+        if (!chatId) {
           return;
         }
 
         const createdAt = new Date().toISOString();
         setSelectedChat((prev) => {
-          if (!prev || prev.id !== selectedChatId) {
+          const baseChat = prev?.id === chatId
+            ? prev
+            : selectedChatRef.current?.id === chatId
+              ? selectedChatRef.current
+              : null;
+          if (!baseChat) {
             return prev;
           }
-
-          return {
-            ...prev,
+          const updated = {
+            ...baseChat,
             updatedAt: createdAt,
             statusUpdatedAt: createdAt,
             lastMessagePreview: normalized.slice(0, 120),
             messages: [
-              ...prev.messages,
+              ...baseChat.messages,
               {
                 id: `local-assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 role: 'assistant',
@@ -2938,11 +3065,75 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                 createdAt,
               },
             ],
-          };
+          } satisfies Chat;
+          selectedChatRef.current = updated;
+          return updated;
         });
         scrollToBottomIfPinned(true);
       },
-      [scrollToBottomIfPinned, selectedChatId]
+      [scrollToBottomIfPinned]
+    );
+
+    const ensureLocalCommandChat = useCallback(
+      async (command: string): Promise<string | null> => {
+        const appendCommand = (baseChat: Chat): string => {
+          const createdAt = new Date().toISOString();
+          const localChat = {
+            ...baseChat,
+            status: 'complete' as const,
+            updatedAt: createdAt,
+            statusUpdatedAt: createdAt,
+            lastMessagePreview: command,
+            messages: [
+              ...baseChat.messages,
+              {
+                id: `local-command-${Date.now()}`,
+                role: 'user' as const,
+                content: command,
+                createdAt,
+              },
+            ],
+          } satisfies Chat;
+          selectedChatIdRef.current = localChat.id;
+          selectedChatRef.current = localChat;
+          setSelectedChatId(localChat.id);
+          setSelectedChat(localChat);
+          return localChat.id;
+        };
+
+        const current = selectedChatRef.current;
+        if (selectedChatId && current?.id === selectedChatId) {
+          return appendCommand(current);
+        }
+
+        try {
+          const created = await api.createChat({
+            agentId: activeAgentId ?? undefined,
+            cwd: preferredStartCwd ?? undefined,
+            model: activeModelId ?? undefined,
+            effort: activeEffort ?? undefined,
+            serviceTier: activeServiceTier ?? undefined,
+            approvalPolicy: activeApprovalPolicy,
+            collaborationMode: selectedCollaborationMode,
+          });
+          const chatId = appendCommand(created);
+          setError(null);
+          return chatId;
+        } catch (err) {
+          setError((err as Error).message);
+          return null;
+        }
+      },
+      [
+        activeAgentId,
+        activeApprovalPolicy,
+        activeEffort,
+        activeModelId,
+        activeServiceTier,
+        api,
+        preferredStartCwd,
+        selectedChatId,
+      ]
     );
 
     const appendLocalSystemMessage = useCallback(
@@ -3262,6 +3453,10 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         }
 
         if (name === 'help') {
+          const commandChatId = await ensureLocalCommandChat(input);
+          if (!commandChatId) {
+            return true;
+          }
           const lines = activeSlashCommands.map((command) => {
             const suffix = command.argsHint ? ` ${command.argsHint}` : '';
             const scope = command.mobileSupported ? 'mobile' : 'CLI only';
@@ -3269,7 +3464,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
           });
           appendLocalAssistantMessage(
             `Supported slash commands:\n${lines.join('\n')}`,
-            'Slash commands'
+            commandChatId
           );
           return true;
         }
@@ -3355,6 +3550,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
                 effort: activeEffort ?? undefined,
                 serviceTier: activeServiceTier ?? undefined,
                 approvalPolicy: activeApprovalPolicy,
+                collaborationMode: 'plan',
               }, planSubmission.id);
               createdChatId = created.id;
               if (activeAgentId) onLastUsedThreadSettingsChange?.(
@@ -3541,6 +3737,10 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         }
 
         if (name === 'status') {
+          const commandChatId = await ensureLocalCommandChat(input);
+          if (!commandChatId) {
+            return true;
+          }
           const lines = [
             `Model: ${activeModelLabel}`,
             `Reasoning: ${activeEffortLabel}`,
@@ -3555,7 +3755,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             lines.push(`Chat workspace: ${selectedChat.cwd ?? 'Not set'}`);
             lines.push(`Chat status: ${selectedChat.status}`);
           }
-          appendLocalAssistantMessage(lines.join('\n'), 'Session status');
+          appendLocalAssistantMessage(lines.join('\n'), commandChatId);
           return true;
         }
 
@@ -3616,6 +3816,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
         activeServiceTier,
         api,
         appendLocalAssistantMessage,
+        ensureLocalCommandChat,
         bumpRunWatchdog,
         clearRunWatchdog,
         discardOptimisticUserMessage,
@@ -4261,6 +4462,7 @@ export const MainScreen = forwardRef<MainScreenHandle, MainScreenProps>(
             effort: activeEffort ?? undefined,
             serviceTier: activeServiceTier ?? undefined,
             approvalPolicy: activeApprovalPolicy,
+            collaborationMode: selectedCollaborationMode,
           },
           message: (created) => ({
             content,
@@ -8455,6 +8657,59 @@ function areChatPlansEquivalent(
   }
 
   return true;
+}
+
+function modelOptionsFromAcpConfig(config: AcpConfigOption[]): ModelOption[] {
+  const model = config.find((option) => option.category === 'model');
+  const effort = config.find((option) => option.category === 'thought_level');
+  if (!model?.options?.length) {
+    return EMPTY_MODEL_OPTIONS;
+  }
+  const selectedId = normalizeModelId(model.value);
+  const reasoningEffort = (effort?.options ?? [])
+    .map((option) => {
+      const normalized = normalizeReasoningEffort(option.value);
+      return normalized
+        ? { effort: normalized, description: option.description ?? option.name }
+        : null;
+    })
+    .filter((option): option is NonNullable<typeof option> => option !== null);
+  const defaultReasoningEffort = normalizeReasoningEffort(effort?.value);
+  return model.options.map((option) => {
+    const [providerId, ...modelParts] = option.value.split('/');
+    const displayName = option.name.includes('/')
+      ? option.name.split('/').at(-1) ?? option.name
+      : option.name;
+    return {
+      id: option.value,
+      displayName,
+      description: option.description,
+      providerId: modelParts.length > 0 ? providerId : undefined,
+      providerName: modelParts.length > 0 ? option.name.split('/')[0] : undefined,
+      isDefault: option.value === selectedId,
+      defaultReasoningEffort: defaultReasoningEffort ?? undefined,
+      reasoningEffort: reasoningEffort.length > 0 ? reasoningEffort : undefined,
+    } satisfies ModelOption;
+  });
+}
+
+function mergeModelOptions(
+  catalog: ModelOption[] | null | undefined,
+  configured: ModelOption[]
+): ModelOption[] {
+  const safeCatalog = catalog ?? EMPTY_MODEL_OPTIONS;
+  const catalogById = new Map(safeCatalog.map((model) => [model.id, model]));
+  const mergedConfigured = configured.map((model) => {
+    const catalogEntry = catalogById.get(model.id);
+    return {
+      ...catalogEntry,
+      ...model,
+      contextWindow: catalogEntry?.contextWindow ?? model.contextWindow,
+      reasoningEffort: model.reasoningEffort ?? catalogEntry?.reasoningEffort,
+    };
+  });
+  const configuredIds = new Set(configured.map((model) => model.id));
+  return [...mergedConfigured, ...safeCatalog.filter((model) => !configuredIds.has(model.id))];
 }
 
 function areChatMessagesEquivalent(

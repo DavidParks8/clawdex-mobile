@@ -22,7 +22,7 @@
     { "method": "POST", "path": "/attachments", "auth": "bearer", "contentType": "multipart/form-data", "maxFileBytes": 20971520 }
   ],
   "mobileForwardedMethods": [
-    "thread/list", "thread/loaded/list", "thread/read", "thread/resume", "thread/snapshot/page",
+    "model/list", "thread/config/set", "thread/list", "thread/loaded/list", "thread/read", "thread/resume", "thread/snapshot/page",
     "thread/start", "turn/interrupt", "turn/start", "turn/steer"
   ],
   "notifications": [
@@ -188,7 +188,10 @@
         "plan": [{ "content": "Inspect state", "priority": "high", "status": "completed" }],
         "usage": { "used": 120, "size": 4096, "cost": "$0.01" },
         "mode": "plan",
-        "config": [{ "id": "model", "value": "example-model" }],
+        "config": [{
+          "id": "model", "value": "example-model", "name": "Model",
+          "description": null, "category": "model", "options": []
+        }],
         "commands": [{ "name": "test", "description": "Run tests" }],
         "session": {
           "agentId": "agent-alpha", "threadId": "agent-alpha:thread-snapshot",
