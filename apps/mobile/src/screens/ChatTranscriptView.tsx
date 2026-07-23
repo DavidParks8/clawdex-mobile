@@ -20,7 +20,6 @@ import {
 } from 'react-native';
 
 import type { Chat } from '../api/types';
-import { ChatMessage, ToolActivityGroup } from '../components/ChatMessage';
 import { useAppTheme } from '../theme';
 import {
   type AutoScrollState,
@@ -39,6 +38,8 @@ import { projectTranscript } from './controllers/transcriptProjectionController'
 import type { AgUiThreadMessageState } from '../api/agUiMessages';
 import { decorativeAccessibilityProps } from '../accessibility';
 import type { TranscriptContinuationState } from './controllers/transcriptContinuationController';
+import { areChatTranscriptViewPropsEqual } from './chatTranscriptComparison';
+import { renderChatTranscriptItem } from './chatTranscriptItem';
 
 export interface ChatTranscriptViewProps {
   chat: Chat;
@@ -274,64 +275,17 @@ export const ChatTranscriptView = memo(function ChatTranscriptView({
     []
   );
   const renderMessageItem = useCallback<ListRenderItem<TranscriptDisplayItem>>(
-    ({ item }) => {
-      if (item.kind === 'toolGroup') {
-        return (
-          <View style={styles.chatMessageBlock}>
-            <ToolActivityGroup
-              messages={item.messages}
-              bridgeUrl={bridgeUrl}
-              bridgeToken={bridgeToken}
-              liveTurnActive={liveTurnActive}
-            />
-          </View>
-        );
-      }
-
-      const msg = item.message;
-      const showInlineChoices = inlineChoiceSet?.messageId === msg.id;
-      return (
-        <View style={styles.chatMessageBlock}>
-          <ChatMessage
-            message={msg}
-            bridgeUrl={bridgeUrl}
-            bridgeToken={bridgeToken}
-            onOpenLocalPreview={onOpenLocalPreview}
-            onOpenSubAgentThread={onOpenSubAgentThread}
-          />
-          {showInlineChoices ? (
-            <View style={styles.inlineChoiceOptions}>
-              {inlineChoiceSet.options.map((option, index) => (
-                <Pressable
-                  key={`${msg.id}-${index}-${option.label}`}
-                  style={({ pressed }) => [
-                    styles.inlineChoiceOptionButton,
-                    pressed && styles.inlineChoiceOptionButtonPressed,
-                  ]}
-                  onPress={() => onInlineOptionSelect(option.label)}
-                  accessibilityRole="button"
-                  accessibilityLabel={option.label}
-                  accessibilityHint={option.description || 'Fills the reply box with this answer'}
-                >
-                  <View style={styles.inlineChoiceOptionRow}>
-                    <Text style={styles.inlineChoiceOptionIndex}>{`${String(index + 1)}.`}</Text>
-                    <Text style={styles.inlineChoiceOptionLabel}>{option.label}</Text>
-                  </View>
-                  {option.description.trim() ? (
-                    <Text style={styles.inlineChoiceOptionDescription}>
-                      {option.description}
-                    </Text>
-                  ) : null}
-                </Pressable>
-              ))}
-              <Text style={styles.inlineChoiceHint}>
-                Tap an option to fill the reply box.
-              </Text>
-            </View>
-          ) : null}
-        </View>
-      );
-    },
+    ({ item }) => renderChatTranscriptItem({
+      item,
+      styles,
+      bridgeUrl,
+      bridgeToken,
+      liveTurnActive,
+      inlineChoiceSet,
+      onInlineOptionSelect,
+      onOpenLocalPreview,
+      onOpenSubAgentThread,
+    }),
     [
       bridgeToken,
       bridgeUrl,
@@ -427,47 +381,3 @@ export const ChatTranscriptView = memo(function ChatTranscriptView({
     </View>
   );
 }, areChatTranscriptViewPropsEqual);
-
-function areChatTranscriptViewPropsEqual(previous: ChatTranscriptViewProps, next: ChatTranscriptViewProps): boolean {
-  return (
-    areChatsEquivalentForTranscript(previous.chat, next.chat) &&
-    areChatsEquivalentForTranscript(previous.parentChat, next.parentChat) &&
-    previous.bridgeUrl === next.bridgeUrl &&
-    previous.bridgeToken === next.bridgeToken &&
-    previous.onOpenLocalPreview === next.onOpenLocalPreview &&
-    previous.showToolCalls === next.showToolCalls &&
-    previous.agentThreadStatusById === next.agentThreadStatusById &&
-    previous.scrollRef === next.scrollRef &&
-    previous.inlineChoicesEnabled === next.inlineChoicesEnabled &&
-    previous.onInlineOptionSelect === next.onInlineOptionSelect &&
-    previous.onPinnedAutoScroll === next.onPinnedAutoScroll &&
-    previous.onJumpToLatest === next.onJumpToLatest &&
-    previous.onScrollInteractionStart === next.onScrollInteractionStart &&
-    previous.autoScrollStateRef === next.autoScrollStateRef &&
-    previous.bottomInset === next.bottomInset &&
-    previous.liveMessageState === next.liveMessageState
-    && previous.onOpenSubAgentThread === next.onOpenSubAgentThread
-    && previous.continuationState === next.continuationState
-    && previous.onLoadEarlier === next.onLoadEarlier
-  );
-}
-
-function areChatsEquivalentForTranscript(
-  previous: Chat | null,
-  next: Chat | null
-): boolean {
-  if (previous === next) {
-    return true;
-  }
-  if (!previous || !next) {
-    return previous === next;
-  }
-
-  return (
-    previous.id === next.id &&
-    previous.parentThreadId === next.parentThreadId &&
-    previous.agentId === next.agentId &&
-    previous.status === next.status &&
-    previous.messages === next.messages
-  );
-}

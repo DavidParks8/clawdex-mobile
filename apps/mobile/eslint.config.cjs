@@ -28,6 +28,14 @@ module.exports = [
       'react-hooks': reactHooks
     },
     rules: {
+      'max-lines': [
+        'error',
+        {
+          max: 400,
+          skipBlankLines: true,
+          skipComments: true
+        }
+      ],
       'react-hooks/rules-of-hooks': 'error',
       '@typescript-eslint/await-thenable': 'error',
       '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],
@@ -37,8 +45,9 @@ module.exports = [
     }
   },
   {
-    files: ['**/__tests__/**/*.ts', '**/__tests__/**/*.tsx'],
+    files: ['**/*.test.ts', '**/*.test.tsx'],
     rules: {
+      'max-lines': 'off',
       '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/unbound-method': 'off',
       '@typescript-eslint/await-thenable': 'off',

@@ -24,6 +24,7 @@
   },
   "include": [
     "App.tsx",
+    "App.test.tsx",
     "src/**/*.ts",
     "src/**/*.tsx",
     "src/**/*.d.ts"

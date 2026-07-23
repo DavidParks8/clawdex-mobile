@@ -7,12 +7,12 @@
     "start": "node scripts/run-expo.cjs start",
     "ios": "node scripts/run-expo.cjs run:ios",
     "android": "node scripts/run-expo.cjs run:android",
-    "lint": "eslint App.tsx src --ext .ts,.tsx --max-warnings=0",
+    "lint": "eslint App.tsx App.test.tsx src --ext .ts,.tsx --max-warnings=0 --cache --cache-strategy content --concurrency 4",
     "typecheck": "tsc --noEmit",
     "build": "node scripts/run-expo.cjs export --platform all --output-dir dist",
     "test": "jest --passWithNoTests",
     "test:coverage": "jest --runInBand --coverage",
-    "test:contract": "jest --runInBand src/api/__tests__/contractFixtures.test.ts",
+    "test:contract": "jest --runInBand src/api/contractFixtures.test.ts",
     "test:watch": "jest --watch"
   },
   "dependencies": {
@@ -76,7 +76,7 @@
       "App.tsx",
       "src/**/*.{ts,tsx}",
       "!src/**/*.d.ts",
-      "!src/**/__tests__/**",
+      "!src/**/*.test.{ts,tsx}",
       "!src/screens/mainScreenStyles.ts"
     ],
     "coverageThreshold": {

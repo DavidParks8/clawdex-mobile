@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -12,9 +12,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(readFileSync(path.join(root, 'contracts/bridge-rpc/v2/manifest.json'), 'utf8'));
 const rustSources = readRustBridgeProductionSources(root);
 const rust = [...rustSources.values()].join('\n');
-const client = readFileSync(path.join(root, 'apps/mobile/src/api/client.ts'), 'utf8');
-const ws = readFileSync(path.join(root, 'apps/mobile/src/api/ws.ts'), 'utf8');
-const mobileSource = `${client}\n${ws}`;
+const readMobileApiProductionSources = (directory) => readdirSync(directory, { withFileTypes: true })
+  .flatMap((entry) => {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return readMobileApiProductionSources(entryPath);
+    if (!entry.isFile() || !entry.name.endsWith('.ts') || entry.name.endsWith('.test.ts')) return [];
+    return [readFileSync(entryPath, 'utf8')];
+  });
+const mobileApiSources = readMobileApiProductionSources(path.join(root, 'apps/mobile/src/api'));
+const mobileSource = mobileApiSources.join('\n');
 const attachments = readFileSync(path.join(root, 'services/rust-bridge/src/attachments.rs'), 'utf8');
 
 const fail = (message) => {
@@ -50,18 +56,18 @@ if (!Array.isArray(manifest.httpEndpoints) || manifest.httpEndpoints.length !== 
 const attachmentEndpoint = manifest.httpEndpoints[0];
 if (attachmentEndpoint.method !== 'POST' || attachmentEndpoint.path !== '/attachments' || attachmentEndpoint.auth !== 'bearer') fail('attachment HTTP endpoint');
 const rustHttpRoutes = extractBridgeHttpRoutes(rustSources);
-if (!rustHttpRoutes.includes('/attachments') || !client.includes('/attachments')) fail('attachment endpoint implementation');
+if (!rustHttpRoutes.includes('/attachments') || !mobileSource.includes('/attachments')) fail('attachment endpoint implementation');
 if (!attachments.includes('ATTACHMENT_MAX_BYTES') || attachmentEndpoint.maxFileBytes !== 20971520) fail('attachment endpoint limit');
 
 const rustProtocol = Number(rust.match(/const BRIDGE_PROTOCOL_VERSION: u32 = (\d+);/)?.[1]);
-const mobileProtocol = Number(ws.match(/static readonly PROTOCOL_VERSION = (\d+);/)?.[1]);
+const mobileProtocol = Number(mobileSource.match(/static readonly PROTOCOL_VERSION = (\d+);/)?.[1]);
 if (rustProtocol !== manifest.protocolVersion || mobileProtocol !== manifest.protocolVersion) {
   fail('protocol version constants do not match the manifest');
 }
 
 assertEqualInventory('native bridge methods', extractNativeBridgeMethods(rustSources), manifest.bridgeMethods);
 for (const method of manifest.mobileForwardedMethods) {
-  if (!client.includes(`'${method}'`) && !client.includes(`"${method}"`)) {
+  if (!mobileSource.includes(`'${method}'`) && !mobileSource.includes(`"${method}"`)) {
     fail(`mobile forwarded method missing: ${method}`);
   }
   if (!rust.includes(`"${method}"`)) fail(`Rust forwarded method missing: ${method}`);

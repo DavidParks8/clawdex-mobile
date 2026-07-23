@@ -73,6 +73,7 @@ Thumbs.db
 # Testing
 coverage/
 .nyc_output/
+.eslintcache
 
 # Misc
 *.log
