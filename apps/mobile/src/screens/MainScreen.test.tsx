@@ -2215,11 +2215,14 @@ describe('MainScreen runtime recovery and synchronization', () => {
   });
 
   it.each([
-    { value: { ...capabilities, agents: [], supportsByAgent: {}, activeAgentId: null } },
-    { value: new Error('capabilities unavailable') },
-  ])('renders unavailable agent capability state', async ({ value }) => {
+    {
+      value: { ...capabilities, agents: [], supportsByAgent: {}, activeAgentId: null },
+      expectedAgentLabel: 'Agent',
+    },
+    { value: new Error('capabilities unavailable'), expectedAgentLabel: 'Codex' },
+  ])('renders unavailable agent capability state', async ({ value, expectedAgentLabel }) => {
     const harness = await renderMain({ api: createApi({ capabilities: value }) });
-    expect(input(harness.tree.root as Queryable).props.placeholder).toContain('Agent');
+    expect(input(harness.tree.root as Queryable).props.placeholder).toContain(expectedAgentLabel);
     expect(input(harness.tree.root as Queryable).props.placeholder).not.toContain('Unknown agent');
     expect(
       (harness.tree.root as Queryable).findAll(

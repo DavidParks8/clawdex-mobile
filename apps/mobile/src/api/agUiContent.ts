@@ -1,3 +1,5 @@
+import { nonEmptyString, record } from './agUiValueReaders';
+
 export function renderAgUiCustomContent(value: unknown): string {
   const structured = renderStructuredContent(value, 0);
   if (structured.length > 0) return structured.join('\n');
@@ -57,14 +59,4 @@ function renderStructuredContent(value: unknown, depth: number): string[] {
   const path = nonEmptyString(entry.path);
   const line = typeof entry.line === 'number' ? entry.line : null;
   return path ? [`[location: ${path}${line ? `:${line}` : ''}]`] : [];
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
 }

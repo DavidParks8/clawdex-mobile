@@ -2,6 +2,7 @@ import { EventSchemas, EventType, type AGUIEvent } from '@ag-ui/core';
 
 import type { RpcNotification } from './types';
 import { SUPPORTED_AG_UI_EVENT_TYPES } from './agUiMessagesState';
+import { nonEmptyString, record } from './agUiValueReaders';
 
 export { renderAgUiCustomContent } from './agUiContent';
 export {
@@ -39,14 +40,4 @@ export function parseAgUiEventNotification(
     return null;
   }
   return { threadId, runId, sourceTurnId, event };
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
 }

@@ -446,172 +446,50 @@ pub(super) fn read_preview_viewport_preset(headers: &HeaderMap) -> Option<Previe
         .and_then(parse_preview_viewport_cookie)
 }
 
-pub(super) fn preview_desktop_shell_response(
-    sanitized_path_and_query: &str,
-    viewport: PreviewViewportConfig,
-    bootstrap_session_id: Option<&str>,
-    bootstrap_token: Option<&str>,
-) -> Response {
-    let desktop_width = viewport.width.unwrap_or(DEFAULT_PREVIEW_DESKTOP_WIDTH);
-    let desktop_height = viewport.height.unwrap_or(DEFAULT_PREVIEW_DESKTOP_HEIGHT);
-    let frame_src = build_preview_shell_frame_src(
-        sanitized_path_and_query,
-        bootstrap_session_id,
-        bootstrap_token,
-    );
-    let frame_src_json = serde_json::to_string(&frame_src).unwrap_or_else(|_| "\"/\"".to_string());
-    let shell_request_key_json = serde_json::to_string(&build_preview_shell_request_key(
-        bootstrap_session_id,
-        bootstrap_token,
-    ))
-    .unwrap_or_else(|_| "null".to_string());
-    let body = format!(
-        r#"<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta id="viewport-meta" name="viewport" content="width=device-width, initial-scale=1, minimum-scale=0.1, maximum-scale=5, user-scalable=yes">
-    <style>
-      html, body {{
-        margin: 0;
-        padding: 0;
-        min-height: 100%;
-        background: #fff;
-      }}
-      body {{
-        overflow-x: auto;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
-      }}
-      #shell {{
-        width: {desktop_width}px;
-        min-height: {desktop_height}px;
-      }}
-      #frame {{
-        display: block;
-        width: {desktop_width}px;
-        min-height: {desktop_height}px;
-        border: 0;
-        background: #fff;
-      }}
-    </style>
-  </head>
-  <body>
-    <div id="shell">
-      <iframe id="frame" title="Desktop preview"></iframe>
-    </div>
-    <script>
-      (function() {{
-        var frame = document.getElementById('frame');
-        var shell = document.getElementById('shell');
-        var viewportMeta = document.getElementById('viewport-meta');
-        var desktopWidth = {desktop_width};
-        var minimumDesktopHeight = {desktop_height};
-        var frameSrc = {frame_src_json};
+#[derive(Clone, Copy)]
+struct PreviewShellModeConfig {
+    iframe_title: &'static str,
+    body_background: &'static str,
+    body_overflow: &'static str,
+    shell_overflow: &'static str,
+    sizing_script: &'static str,
+    resize_script: &'static str,
+    initial_layout_script: &'static str,
+}
+
+impl PreviewShellMode {
+    fn shell_config(self) -> PreviewShellModeConfig {
+        match self {
+            Self::Desktop => PreviewShellModeConfig {
+                iframe_title: "Desktop preview",
+                body_background: "#fff",
+                body_overflow: "overflow-x: auto;\n        overflow-y: auto;",
+                shell_overflow: "",
+                sizing_script: DESKTOP_SHELL_SIZING_SCRIPT,
+                resize_script: DESKTOP_SHELL_RESIZE_SCRIPT,
+                initial_layout_script: DESKTOP_SHELL_INITIAL_LAYOUT_SCRIPT,
+            },
+            Self::Overview => PreviewShellModeConfig {
+                iframe_title: "Overview preview",
+                body_background: "#000",
+                body_overflow: "overflow: auto;",
+                shell_overflow: "        overflow: visible;\n",
+                sizing_script: OVERVIEW_SHELL_SIZING_SCRIPT,
+                resize_script: "",
+                initial_layout_script: OVERVIEW_SHELL_INITIAL_LAYOUT_SCRIPT,
+            },
+        }
+    }
+}
+
+const DESKTOP_SHELL_SIZING_SCRIPT: &str = r#"
         var lastMeasuredHeight = 0;
-        var lastPostedStateJson = '';
-        var knownHistory = [];
-        var knownHistoryIndex = -1;
-        var frameResizeObserver = null;
-        var frameMutationObserver = null;
-        var frameCleanupCallbacks = [];
-        var measureFrameQueued = false;
         var initialFitApplied = false;
 
-        function currentFrameWindow() {{
-          try {{
-            return frame.contentWindow || null;
-          }} catch (_error) {{
-            return null;
-          }}
-        }}
-
-        function currentFrameDocument() {{
-          try {{
-            return frame.contentDocument || (frame.contentWindow && frame.contentWindow.document) || null;
-          }} catch (_error) {{
-            return null;
-          }}
-        }}
-
-        function cleanupFrameObservers() {{
-          if (frameResizeObserver) {{
-            frameResizeObserver.disconnect();
-            frameResizeObserver = null;
-          }}
-          if (frameMutationObserver) {{
-            frameMutationObserver.disconnect();
-            frameMutationObserver = null;
-          }}
-          while (frameCleanupCallbacks.length > 0) {{
-            var callback = frameCleanupCallbacks.pop();
-            try {{
-              callback();
-            }} catch (_error) {{}}
-          }}
-        }}
-
-        function syncHistory(rawUrl) {{
-          if (!rawUrl) {{
+        function applyInitialFit() {
+          if (initialFitApplied || !viewportMeta) {
             return;
-          }}
-          if (knownHistoryIndex >= 0 && knownHistory[knownHistoryIndex] === rawUrl) {{
-            return;
-          }}
-          if (knownHistoryIndex > 0 && knownHistory[knownHistoryIndex - 1] === rawUrl) {{
-            knownHistoryIndex -= 1;
-            return;
-          }}
-          if (
-            knownHistoryIndex + 1 < knownHistory.length &&
-            knownHistory[knownHistoryIndex + 1] === rawUrl
-          ) {{
-            knownHistoryIndex += 1;
-            return;
-          }}
-          knownHistory = knownHistory.slice(0, knownHistoryIndex + 1);
-          knownHistory.push(rawUrl);
-          knownHistoryIndex = knownHistory.length - 1;
-        }}
-
-        function postState() {{
-          if (
-            !window.ReactNativeWebView ||
-            typeof window.ReactNativeWebView.postMessage !== 'function'
-          ) {{
-            return;
-          }}
-
-          var rawUrl = '';
-          var title = '';
-          try {{
-            var win = currentFrameWindow();
-            rawUrl = win && win.location ? String(win.location.href) : '';
-          }} catch (_error) {{}}
-          try {{
-            var doc = currentFrameDocument();
-            title = doc ? String(doc.title || '') : '';
-          }} catch (_error) {{}}
-          syncHistory(rawUrl);
-          var nextStateJson = JSON.stringify({{
-            type: 'tethercodeDesktopFrameState',
-            shellRequestKey: {shell_request_key_json},
-            rawUrl: rawUrl,
-            title: title,
-            canGoBack: knownHistoryIndex > 0,
-            canGoForward: knownHistoryIndex >= 0 && knownHistoryIndex < knownHistory.length - 1,
-          }});
-          if (nextStateJson === lastPostedStateJson) {{
-            return;
-          }}
-          lastPostedStateJson = nextStateJson;
-          window.ReactNativeWebView.postMessage(nextStateJson);
-        }}
-
-        function applyInitialFit() {{
-          if (initialFitApplied || !viewportMeta) {{
-            return;
-          }}
+          }
           var viewportWidth = Math.max(
             window.innerWidth || document.documentElement.clientWidth || 0,
             1
@@ -628,322 +506,38 @@ pub(super) fn preview_desktop_shell_response(
               ', maximum-scale=5, user-scalable=yes'
           );
           initialFitApplied = true;
-        }}
+        }
 
-        function measureFrameHeight() {{
+        function measureFrameHeight() {
           measureFrameQueued = false;
-          if (minimumDesktopHeight !== lastMeasuredHeight) {{
+          if (minimumDesktopHeight !== lastMeasuredHeight) {
             lastMeasuredHeight = minimumDesktopHeight;
             frame.style.height = minimumDesktopHeight + 'px';
             shell.style.height = minimumDesktopHeight + 'px';
-          }}
+          }
           applyInitialFit();
           postState();
-        }}
+        }
+"#;
 
-        function queueMeasureFrameHeight() {{
-          if (measureFrameQueued) {{
-            return;
-          }}
-          measureFrameQueued = true;
-          window.requestAnimationFrame(function() {{
-            measureFrameHeight();
-          }});
-        }}
+const DESKTOP_SHELL_RESIZE_SCRIPT: &str = r#"
+        window.addEventListener('resize', queueMeasureFrameHeight, { passive: true });
+"#;
 
-        function installFrameObservers() {{
-          cleanupFrameObservers();
-          var win = currentFrameWindow();
-          var doc = currentFrameDocument();
-          if (!win || !doc) {{
-            return;
-          }}
-
-          function addFrameListener(target, eventName, handler, options) {{
-            if (!target || typeof target.addEventListener !== 'function') {{
-              return;
-            }}
-            target.addEventListener(eventName, handler, options);
-            frameCleanupCallbacks.push(function() {{
-              try {{
-                target.removeEventListener(eventName, handler, options);
-              }} catch (_error) {{}}
-            }});
-          }}
-
-          if (typeof ResizeObserver === 'function') {{
-            frameResizeObserver = new ResizeObserver(function() {{
-              queueMeasureFrameHeight();
-            }});
-            if (doc.documentElement) {{
-              frameResizeObserver.observe(doc.documentElement);
-            }}
-            if (doc.body) {{
-              frameResizeObserver.observe(doc.body);
-            }}
-          }}
-
-          if (typeof MutationObserver === 'function' && doc.head) {{
-            frameMutationObserver = new MutationObserver(function() {{
-              postState();
-            }});
-            frameMutationObserver.observe(doc.head, {{
-              childList: true,
-              subtree: true,
-              characterData: true,
-            }});
-          }}
-
-          addFrameListener(win, 'load', queueMeasureFrameHeight, {{ passive: true }});
-          addFrameListener(win, 'pageshow', queueMeasureFrameHeight, {{ passive: true }});
-          addFrameListener(win, 'hashchange', postState, {{ passive: true }});
-          addFrameListener(win, 'popstate', postState, {{ passive: true }});
-
-          if (doc.fonts && typeof doc.fonts.ready === 'object' && typeof doc.fonts.ready.then === 'function') {{
-            doc.fonts.ready.then(queueMeasureFrameHeight).catch(function() {{}});
-          }}
-
-          if (!win.__tethercodeDesktopFramePatched && win.history) {{
-            win.__tethercodeDesktopFramePatched = true;
-            var originalPushState = typeof win.history.pushState === 'function' ? win.history.pushState.bind(win.history) : null;
-            var originalReplaceState = typeof win.history.replaceState === 'function' ? win.history.replaceState.bind(win.history) : null;
-            if (originalPushState) {{
-              win.history.pushState = function() {{
-                var result = originalPushState.apply(null, arguments);
-                postState();
-                queueMeasureFrameHeight();
-                return result;
-              }};
-            }}
-            if (originalReplaceState) {{
-              win.history.replaceState = function() {{
-                var result = originalReplaceState.apply(null, arguments);
-                postState();
-                queueMeasureFrameHeight();
-                return result;
-              }};
-            }}
-          }}
-        }}
-
-        frame.addEventListener('load', function() {{
-          installFrameObservers();
-          queueMeasureFrameHeight();
-          setTimeout(queueMeasureFrameHeight, 120);
-          setTimeout(queueMeasureFrameHeight, 400);
-        }});
-        window.addEventListener('resize', queueMeasureFrameHeight, {{ passive: true }});
-
-        window.__tethercodeDesktopFrame = {{
-          goBack: function() {{
-            var win = currentFrameWindow();
-            if (win) {{
-              win.history.back();
-            }}
-          }},
-          goForward: function() {{
-            var win = currentFrameWindow();
-            if (win) {{
-              win.history.forward();
-            }}
-          }},
-          reload: function() {{
-            lastPostedStateJson = '';
-            var win = currentFrameWindow();
-            if (win) {{
-              win.location.reload();
-            }} else {{
-              frame.src = frame.src;
-            }}
-          }},
-        }};
-
+const DESKTOP_SHELL_INITIAL_LAYOUT_SCRIPT: &str = r#"
         shell.style.height = minimumDesktopHeight + 'px';
         frame.style.height = minimumDesktopHeight + 'px';
         applyInitialFit();
-        frame.src = frameSrc;
-      }})();
-    </script>
-  </body>
-</html>"#
-    );
+"#;
 
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "text/html; charset=utf-8")
-        .header(CACHE_CONTROL, "no-store, private")
-        .header(REFERRER_POLICY, "no-referrer")
-        .header("x-content-type-options", "nosniff")
-        .body(Body::from(body))
-        .unwrap_or_else(|_| Response::new(Body::from(String::new())))
-}
-
-pub(super) fn preview_overview_shell_response(
-    sanitized_path_and_query: &str,
-    viewport: PreviewViewportConfig,
-    bootstrap_session_id: Option<&str>,
-    bootstrap_token: Option<&str>,
-) -> Response {
-    let desktop_width = viewport.width.unwrap_or(DEFAULT_PREVIEW_DESKTOP_WIDTH);
-    let desktop_height = viewport.height.unwrap_or(DEFAULT_PREVIEW_DESKTOP_HEIGHT);
-    let frame_src = build_preview_shell_frame_src(
-        sanitized_path_and_query,
-        bootstrap_session_id,
-        bootstrap_token,
-    );
-    let frame_src_json = serde_json::to_string(&frame_src).unwrap_or_else(|_| "\"/\"".to_string());
-    let shell_request_key_json = serde_json::to_string(&build_preview_shell_request_key(
-        bootstrap_session_id,
-        bootstrap_token,
-    ))
-    .unwrap_or_else(|_| "null".to_string());
-    let body = format!(
-        r#"<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta id="viewport-meta" name="viewport" content="width=device-width, initial-scale=1, minimum-scale=0.1, maximum-scale=5, user-scalable=yes">
-    <style>
-      html, body {{
-        margin: 0;
-        padding: 0;
-        min-height: 100%;
-        background: #000;
-      }}
-      body {{
-        overflow: auto;
-        -webkit-overflow-scrolling: touch;
-      }}
-      #shell {{
-        width: {desktop_width}px;
-        min-height: {desktop_height}px;
-        overflow: visible;
-      }}
-      #frame {{
-        display: block;
-        width: {desktop_width}px;
-        min-height: {desktop_height}px;
-        border: 0;
-        background: #fff;
-      }}
-    </style>
-  </head>
-  <body>
-    <div id="shell">
-      <iframe id="frame" title="Overview preview"></iframe>
-    </div>
-    <script>
-      (function() {{
-        var frame = document.getElementById('frame');
-        var shell = document.getElementById('shell');
-        var viewportMeta = document.getElementById('viewport-meta');
-        var desktopWidth = {desktop_width};
-        var minimumDesktopHeight = {desktop_height};
-        var frameSrc = {frame_src_json};
+const OVERVIEW_SHELL_SIZING_SCRIPT: &str = r#"
         var lastMeasuredHeight = minimumDesktopHeight;
-        var lastPostedStateJson = '';
-        var knownHistory = [];
-        var knownHistoryIndex = -1;
-        var frameResizeObserver = null;
-        var frameMutationObserver = null;
-        var frameCleanupCallbacks = [];
-        var measureFrameQueued = false;
         var initialFitApplied = false;
 
-        function currentFrameWindow() {{
-          try {{
-            return frame.contentWindow || null;
-          }} catch (_error) {{
-            return null;
-          }}
-        }}
-
-        function currentFrameDocument() {{
-          try {{
-            return frame.contentDocument || (frame.contentWindow && frame.contentWindow.document) || null;
-          }} catch (_error) {{
-            return null;
-          }}
-        }}
-
-        function cleanupFrameObservers() {{
-          if (frameResizeObserver) {{
-            frameResizeObserver.disconnect();
-            frameResizeObserver = null;
-          }}
-          if (frameMutationObserver) {{
-            frameMutationObserver.disconnect();
-            frameMutationObserver = null;
-          }}
-          while (frameCleanupCallbacks.length > 0) {{
-            var callback = frameCleanupCallbacks.pop();
-            try {{
-              callback();
-            }} catch (_error) {{}}
-          }}
-        }}
-
-        function syncHistory(rawUrl) {{
-          if (!rawUrl) {{
+        function applyInitialFit(contentHeight) {
+          if (initialFitApplied || !viewportMeta) {
             return;
-          }}
-          if (knownHistoryIndex >= 0 && knownHistory[knownHistoryIndex] === rawUrl) {{
-            return;
-          }}
-          if (knownHistoryIndex > 0 && knownHistory[knownHistoryIndex - 1] === rawUrl) {{
-            knownHistoryIndex -= 1;
-            return;
-          }}
-          if (
-            knownHistoryIndex + 1 < knownHistory.length &&
-            knownHistory[knownHistoryIndex + 1] === rawUrl
-          ) {{
-            knownHistoryIndex += 1;
-            return;
-          }}
-          knownHistory = knownHistory.slice(0, knownHistoryIndex + 1);
-          knownHistory.push(rawUrl);
-          knownHistoryIndex = knownHistory.length - 1;
-        }}
-
-        function postState() {{
-          if (
-            !window.ReactNativeWebView ||
-            typeof window.ReactNativeWebView.postMessage !== 'function'
-          ) {{
-            return;
-          }}
-
-          var rawUrl = '';
-          var title = '';
-          try {{
-            var win = currentFrameWindow();
-            rawUrl = win && win.location ? String(win.location.href) : '';
-          }} catch (_error) {{}}
-          try {{
-            var doc = currentFrameDocument();
-            title = doc ? String(doc.title || '') : '';
-          }} catch (_error) {{}}
-          syncHistory(rawUrl);
-          var nextStateJson = JSON.stringify({{
-            type: 'tethercodeDesktopFrameState',
-            shellRequestKey: {shell_request_key_json},
-            rawUrl: rawUrl,
-            title: title,
-            canGoBack: knownHistoryIndex > 0,
-            canGoForward: knownHistoryIndex >= 0 && knownHistoryIndex < knownHistory.length - 1,
-          }});
-          if (nextStateJson === lastPostedStateJson) {{
-            return;
-          }}
-          lastPostedStateJson = nextStateJson;
-          window.ReactNativeWebView.postMessage(nextStateJson);
-        }}
-
-        function applyInitialFit(contentHeight) {{
-          if (initialFitApplied || !viewportMeta) {{
-            return;
-          }}
+          }
           var viewportWidth = Math.max(
             (window.visualViewport && window.visualViewport.width) || window.innerWidth || 0,
             1
@@ -964,26 +558,26 @@ pub(super) fn preview_overview_shell_response(
               ', maximum-scale=5, user-scalable=yes'
           );
           initialFitApplied = true;
-        }}
+        }
 
-        function applyLayout(contentHeight) {{
+        function applyLayout(contentHeight) {
           shell.style.width = desktopWidth + 'px';
           shell.style.height = contentHeight + 'px';
           frame.style.width = desktopWidth + 'px';
           frame.style.height = contentHeight + 'px';
-        }}
+        }
 
-        function measureFrameHeight() {{
+        function measureFrameHeight() {
           measureFrameQueued = false;
           var doc = currentFrameDocument();
           var height = minimumDesktopHeight;
-          if (doc && doc.documentElement) {{
+          if (doc && doc.documentElement) {
             var html = doc.documentElement;
             var body = doc.body;
             html.style.overflow = 'hidden';
-            if (body) {{
+            if (body) {
               body.style.overflow = 'hidden';
-            }}
+            }
             height = Math.max(
               minimumDesktopHeight,
               html.scrollHeight || 0,
@@ -991,14 +585,211 @@ pub(super) fn preview_overview_shell_response(
               body ? body.scrollHeight || 0 : 0,
               body ? body.offsetHeight || 0 : 0
             );
-          }}
+          }
 
-          if (height !== lastMeasuredHeight) {{
+          if (height !== lastMeasuredHeight) {
             lastMeasuredHeight = height;
-          }}
+          }
           applyLayout(height);
           applyInitialFit(height);
           postState();
+        }
+"#;
+
+const OVERVIEW_SHELL_INITIAL_LAYOUT_SCRIPT: &str = r#"
+        applyLayout(minimumDesktopHeight);
+"#;
+
+pub(super) fn preview_desktop_shell_response(
+    sanitized_path_and_query: &str,
+    viewport: PreviewViewportConfig,
+    bootstrap_session_id: Option<&str>,
+    bootstrap_token: Option<&str>,
+) -> Response {
+    preview_shell_response(
+        PreviewShellMode::Desktop,
+        sanitized_path_and_query,
+        viewport,
+        bootstrap_session_id,
+        bootstrap_token,
+    )
+}
+
+pub(super) fn preview_overview_shell_response(
+    sanitized_path_and_query: &str,
+    viewport: PreviewViewportConfig,
+    bootstrap_session_id: Option<&str>,
+    bootstrap_token: Option<&str>,
+) -> Response {
+    preview_shell_response(
+        PreviewShellMode::Overview,
+        sanitized_path_and_query,
+        viewport,
+        bootstrap_session_id,
+        bootstrap_token,
+    )
+}
+
+fn preview_shell_response(
+    mode: PreviewShellMode,
+    sanitized_path_and_query: &str,
+    viewport: PreviewViewportConfig,
+    bootstrap_session_id: Option<&str>,
+    bootstrap_token: Option<&str>,
+) -> Response {
+    let config = mode.shell_config();
+    let desktop_width = viewport.width.unwrap_or(DEFAULT_PREVIEW_DESKTOP_WIDTH);
+    let desktop_height = viewport.height.unwrap_or(DEFAULT_PREVIEW_DESKTOP_HEIGHT);
+    let frame_src = build_preview_shell_frame_src(
+        sanitized_path_and_query,
+        bootstrap_session_id,
+        bootstrap_token,
+    );
+    let frame_src_json = serde_json::to_string(&frame_src).unwrap_or_else(|_| "\"/\"".to_string());
+    let shell_request_key_json = serde_json::to_string(&build_preview_shell_request_key(
+        bootstrap_session_id,
+        bootstrap_token,
+    ))
+    .unwrap_or_else(|_| "null".to_string());
+    let body = format!(
+        r#"<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta id="viewport-meta" name="viewport" content="width=device-width, initial-scale=1, minimum-scale=0.1, maximum-scale=5, user-scalable=yes">
+    <style>
+      html, body {{
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+        background: {body_background};
+      }}
+      body {{
+        {body_overflow}
+        -webkit-overflow-scrolling: touch;
+      }}
+      #shell {{
+        width: {desktop_width}px;
+        min-height: {desktop_height}px;
+{shell_overflow}      }}
+      #frame {{
+        display: block;
+        width: {desktop_width}px;
+        min-height: {desktop_height}px;
+        border: 0;
+        background: #fff;
+      }}
+    </style>
+  </head>
+  <body>
+    <div id="shell">
+      <iframe id="frame" title="{iframe_title}"></iframe>
+    </div>
+    <script>
+      (function() {{
+        var frame = document.getElementById('frame');
+        var shell = document.getElementById('shell');
+        var viewportMeta = document.getElementById('viewport-meta');
+        var desktopWidth = {desktop_width};
+        var minimumDesktopHeight = {desktop_height};
+        var frameSrc = {frame_src_json};
+        var lastPostedStateJson = '';
+        var knownHistory = [];
+        var knownHistoryIndex = -1;
+        var frameResizeObserver = null;
+        var frameMutationObserver = null;
+        var frameCleanupCallbacks = [];
+        var measureFrameQueued = false;
+{sizing_script}
+
+        function currentFrameWindow() {{
+          try {{
+            return frame.contentWindow || null;
+          }} catch (_error) {{
+            return null;
+          }}
+        }}
+
+        function currentFrameDocument() {{
+          try {{
+            return frame.contentDocument || (frame.contentWindow && frame.contentWindow.document) || null;
+          }} catch (_error) {{
+            return null;
+          }}
+        }}
+
+        function cleanupFrameObservers() {{
+          if (frameResizeObserver) {{
+            frameResizeObserver.disconnect();
+            frameResizeObserver = null;
+          }}
+          if (frameMutationObserver) {{
+            frameMutationObserver.disconnect();
+            frameMutationObserver = null;
+          }}
+          while (frameCleanupCallbacks.length > 0) {{
+            var callback = frameCleanupCallbacks.pop();
+            try {{
+              callback();
+            }} catch (_error) {{}}
+          }}
+        }}
+
+        function syncHistory(rawUrl) {{
+          if (!rawUrl) {{
+            return;
+          }}
+          if (knownHistoryIndex >= 0 && knownHistory[knownHistoryIndex] === rawUrl) {{
+            return;
+          }}
+          if (knownHistoryIndex > 0 && knownHistory[knownHistoryIndex - 1] === rawUrl) {{
+            knownHistoryIndex -= 1;
+            return;
+          }}
+          if (
+            knownHistoryIndex + 1 < knownHistory.length &&
+            knownHistory[knownHistoryIndex + 1] === rawUrl
+          ) {{
+            knownHistoryIndex += 1;
+            return;
+          }}
+          knownHistory = knownHistory.slice(0, knownHistoryIndex + 1);
+          knownHistory.push(rawUrl);
+          knownHistoryIndex = knownHistory.length - 1;
+        }}
+
+        function postState() {{
+          if (
+            !window.ReactNativeWebView ||
+            typeof window.ReactNativeWebView.postMessage !== 'function'
+          ) {{
+            return;
+          }}
+
+          var rawUrl = '';
+          var title = '';
+          try {{
+            var win = currentFrameWindow();
+            rawUrl = win && win.location ? String(win.location.href) : '';
+          }} catch (_error) {{}}
+          try {{
+            var doc = currentFrameDocument();
+            title = doc ? String(doc.title || '') : '';
+          }} catch (_error) {{}}
+          syncHistory(rawUrl);
+          var nextStateJson = JSON.stringify({{
+            type: 'tethercodeDesktopFrameState',
+            shellRequestKey: {shell_request_key_json},
+            rawUrl: rawUrl,
+            title: title,
+            canGoBack: knownHistoryIndex > 0,
+            canGoForward: knownHistoryIndex >= 0 && knownHistoryIndex < knownHistory.length - 1,
+          }});
+          if (nextStateJson === lastPostedStateJson) {{
+            return;
+          }}
+          lastPostedStateJson = nextStateJson;
+          window.ReactNativeWebView.postMessage(nextStateJson);
         }}
 
         function queueMeasureFrameHeight() {{
@@ -1092,6 +883,7 @@ pub(super) fn preview_overview_shell_response(
           setTimeout(queueMeasureFrameHeight, 120);
           setTimeout(queueMeasureFrameHeight, 400);
         }});
+{resize_script}
 
         window.__tethercodeDesktopFrame = {{
           goBack: function() {{
@@ -1117,12 +909,19 @@ pub(super) fn preview_overview_shell_response(
           }},
         }};
 
-        applyLayout(minimumDesktopHeight);
+{initial_layout_script}
         frame.src = frameSrc;
       }})();
     </script>
   </body>
-</html>"#
+</html>"#,
+        iframe_title = config.iframe_title,
+        body_background = config.body_background,
+        body_overflow = config.body_overflow,
+        shell_overflow = config.shell_overflow,
+        sizing_script = config.sizing_script,
+        resize_script = config.resize_script,
+        initial_layout_script = config.initial_layout_script,
     );
 
     Response::builder()
@@ -1726,4 +1525,137 @@ pub(super) fn html_escape(value: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+
+    fn desktop_viewport() -> PreviewViewportConfig {
+        PreviewViewportConfig {
+            preset: PreviewViewportPreset::Desktop,
+            width: Some(1440),
+            height: Some(900),
+        }
+    }
+
+    async fn response_body(response: Response) -> String {
+        String::from_utf8(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("preview shell response body should be readable")
+                .to_vec(),
+        )
+        .expect("preview shell response body should be UTF-8")
+    }
+
+    #[tokio::test]
+    async fn preview_shell_responses_share_headers_and_navigation_runtime() {
+        let responses = [
+            preview_desktop_shell_response("/workspace", desktop_viewport(), Some("session"), None),
+            preview_overview_shell_response(
+                "/workspace",
+                desktop_viewport(),
+                Some("session"),
+                None,
+            ),
+        ];
+
+        for response in responses {
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok()),
+                Some("text/html; charset=utf-8")
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get(CACHE_CONTROL)
+                    .and_then(|value| value.to_str().ok()),
+                Some("no-store, private")
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get(REFERRER_POLICY)
+                    .and_then(|value| value.to_str().ok()),
+                Some("no-referrer")
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("x-content-type-options")
+                    .and_then(|value| value.to_str().ok()),
+                Some("nosniff")
+            );
+
+            let body = response_body(response).await;
+            for marker in [
+                "type: 'tethercodeDesktopFrameState'",
+                "function currentFrameWindow()",
+                "function currentFrameDocument()",
+                "function installFrameObservers()",
+                "new ResizeObserver",
+                "new MutationObserver",
+                "window.__tethercodeDesktopFrame =",
+                "goBack: function()",
+                "goForward: function()",
+                "reload: function()",
+            ] {
+                assert!(
+                    body.contains(marker),
+                    "missing shared runtime marker: {marker}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn preview_shell_responses_preserve_mode_layouts_and_sanitize_frame_source() {
+        let path = "/workspace?sid=query-session&st=query-token&shell=overview&frame=0&theme=dark";
+        let desktop = response_body(preview_desktop_shell_response(
+            path,
+            desktop_viewport(),
+            Some("request-key"),
+            Some("bootstrap-token"),
+        ))
+        .await;
+        let overview = response_body(preview_overview_shell_response(
+            path,
+            desktop_viewport(),
+            Some("request-key"),
+            Some("bootstrap-token"),
+        ))
+        .await;
+
+        for body in [&desktop, &overview] {
+            assert!(
+                body.contains("var frameSrc = \"/workspace?theme=dark&frame=1\";"),
+                "frame source should retain only safe query parameters"
+            );
+            assert!(!body.contains("sid=query-session"));
+            assert!(!body.contains("st=query-token"));
+            assert!(!body.contains("shell=overview"));
+            assert!(!body.contains("frame=0"));
+        }
+
+        assert!(desktop.contains("title=\"Desktop preview\""));
+        assert!(desktop.contains("background: #fff;"));
+        assert!(desktop.contains("overflow-x: auto;"));
+        assert!(desktop.contains("window.addEventListener('resize', queueMeasureFrameHeight"));
+        assert!(desktop.contains("shell.style.height = minimumDesktopHeight + 'px';"));
+        assert!(!desktop.contains("window.visualViewport"));
+
+        assert!(overview.contains("title=\"Overview preview\""));
+        assert!(overview.contains("background: #000;"));
+        assert!(overview.contains("overflow: visible;"));
+        assert!(overview.contains("window.visualViewport"));
+        assert!(overview.contains("html.style.overflow = 'hidden';"));
+        assert!(overview.contains("applyLayout(minimumDesktopHeight);"));
+        assert!(!overview.contains("window.addEventListener('resize', queueMeasureFrameHeight"));
+    }
 }

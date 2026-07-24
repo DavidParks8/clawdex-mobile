@@ -90,6 +90,7 @@ phone, not the Mac running the bridge.
 
 ```bash
 npm run lint
+npm run duplicates:check
 npm run typecheck
 npm run test
 npm run contract:check
@@ -97,6 +98,10 @@ npm run coverage:check
 npm run coverage:rust
 npm run desktop:build:macos
 ```
+
+`npm run duplicates:check` scans authored mobile TypeScript and native Rust/Swift sources with
+separate production-focused thresholds. Generated artifacts and dedicated test files/directories
+are excluded; inline Rust unit tests remain subject to the native high-signal threshold.
 
 GitHub Actions validates repository policy, RPC contracts, mobile quality/coverage, Rust bridge
 quality/coverage, and a signed macOS app bundle. Mobile EAS distribution remains a separate

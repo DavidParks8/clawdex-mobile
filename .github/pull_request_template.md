@@ -6,6 +6,7 @@
 ## Validation
 
 - [ ] `npm run lint`
+- [ ] `npm run duplicates:check`
 - [ ] `npm run typecheck`
 - [ ] `npm run test`
 - [ ] `npm run payment:check`

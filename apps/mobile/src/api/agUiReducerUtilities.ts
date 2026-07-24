@@ -2,6 +2,9 @@ import { renderAgUiCustomContent } from "./agUiContent";
 import { toolCall } from "./agUiStructuredAndTerminalReducers";
 import { type ChatMessagePart } from "./types";
 import { type ToolCall } from "@ag-ui/core";
+import { nonEmptyString, record } from "./agUiValueReaders";
+
+export { nonEmptyString, record } from "./agUiValueReaders";
 
 export function upsertToolCall(
   calls: ToolCall[],
@@ -102,14 +105,4 @@ export function timestampIso(timestamp?: number): string {
   return typeof timestamp === "number" && Number.isFinite(timestamp)
     ? new Date(timestamp).toISOString()
     : new Date().toISOString();
-}
-
-export function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-export function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }

@@ -1,0 +1,14 @@
+{
+  "minTokens": 240,
+  "minLines": 30,
+  "format": ["rust", "swift"],
+  "pattern": "**/*.{rs,swift}",
+  "ignore": [
+    "**/target/**",
+    "**/tests/**",
+    "**/*_test.rs",
+    "**/*generated.rs"
+  ],
+  "threshold": 0.5,
+  "reporters": ["console"]
+}

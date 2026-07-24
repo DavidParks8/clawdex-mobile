@@ -25,9 +25,14 @@ npm run operator -- status --workspace "$PWD"
 npm run desktop:test
 npm run contract:check
 npm run lint
+npm run duplicates:check
 npm run typecheck
 npm run test
 ```
+
+`npm run duplicates:check` validates authored mobile and native source separately. Generated
+artifacts and dedicated test files/directories are excluded; inline Rust unit tests remain subject
+to the native high-signal threshold.
 
 The repository pins Rust in `rust-toolchain.toml`.
 

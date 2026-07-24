@@ -63,7 +63,6 @@ interface AppMainLayoutProps {
     handleSelectChat: (id: string) => void;
     handleNewChat: () => void;
     openBrowser: (targetUrl?: string | null) => void;
-    handleOpenBridgeRecoveryGuide: () => void;
     handleLastUsedThreadSettingsChange: (agentId: string, collaborationMode: 'default' | 'plan') => void;
     handleOpenChatGit: (chat: Chat) => void;
     handleChatContextChange: (chat: Chat | null) => void;
@@ -76,6 +75,7 @@ interface AppMainLayoutProps {
   profileActions: {
     handleEditBridgeProfile: () => void;
     handleAddBridgeProfile: () => void;
+    handleOpenBridgeRecoveryGuide: () => void;
     handleSwitchBridgeProfile: (profileId: string) => Promise<void>;
     handleRenameBridgeProfile: (profileId: string, nextName: string) => Promise<void>;
     handleDeleteBridgeProfile: (profileId: string) => Promise<void>;
@@ -200,7 +200,7 @@ export function AppMainLayout(props: AppMainLayoutProps) {
                   onOpenDrawer={drawer.handleNavigationToggle}
                   onOpenGit={navActions.handleOpenChatGit}
                   onOpenLocalPreview={navActions.openBrowser}
-                  onOpenBridgeRecoveryGuide={navActions.handleOpenBridgeRecoveryGuide}
+                  onOpenBridgeRecoveryGuide={profileActions.handleOpenBridgeRecoveryGuide}
                   onLastUsedThreadSettingsChange={navActions.handleLastUsedThreadSettingsChange}
                   onChatContextChange={navActions.handleChatContextChange}
                   onChatOpeningStateChange={setMainOpeningChatId}

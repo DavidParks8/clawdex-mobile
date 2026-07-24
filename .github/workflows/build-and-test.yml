@@ -47,6 +47,7 @@ jobs:
           npm run payment:check
           npm run test:scripts
           npm run security:check
+          npm run duplicates:native
 
   rpc-contract:
     name: RPC Contract
@@ -100,6 +101,9 @@ jobs:
 
       - name: Lint
         run: npm run lint -w @tethercode/mobile
+
+      - name: Check source duplication
+        run: npm run duplicates:mobile
 
       - name: Typecheck
         run: npm run typecheck -w @tethercode/mobile

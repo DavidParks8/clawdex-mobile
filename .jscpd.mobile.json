@@ -1,0 +1,16 @@
+{
+  "minTokens": 80,
+  "minLines": 8,
+  "format": ["typescript", "tsx"],
+  "pattern": "**/*.{ts,tsx}",
+  "ignore": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/__tests__/**",
+    "**/*.d.ts",
+    "**/coverage/**",
+    "**/ios/**"
+  ],
+  "threshold": 0.5,
+  "reporters": ["console"]
+}

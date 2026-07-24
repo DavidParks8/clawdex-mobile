@@ -61,6 +61,7 @@ jobs:
           npm run version:check
           npm run payment:check
           npm run lint -w @tethercode/mobile
+          npm run duplicates:mobile
           npm run typecheck -w @tethercode/mobile
           npm run test:coverage -w @tethercode/mobile
 

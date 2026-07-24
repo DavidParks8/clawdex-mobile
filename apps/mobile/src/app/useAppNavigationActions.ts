@@ -14,7 +14,6 @@ interface UseAppNavigationActionsArgs {
   onboardingMode: OnboardingMode;
   activeBridgeProfile: unknown;
   browserReturnScreen: AppScreen;
-  bridgeUrl: string | null;
   mainOpeningChatId: string | null;
   activeChat: Chat | null;
   gitChat: Chat | null;
@@ -34,8 +33,6 @@ interface UseAppNavigationActionsArgs {
   setSelectedChatId: Dispatch<SetStateAction<string | null>>;
   setActiveChat: Dispatch<SetStateAction<Chat | null>>;
   setGitChat: Dispatch<SetStateAction<Chat | null>>;
-  setOnboardingMode: Dispatch<SetStateAction<OnboardingMode>>;
-  setOnboardingReturnScreen: Dispatch<SetStateAction<AppScreen>>;
   setSettingsAllowsDrawerGesture: Dispatch<SetStateAction<boolean>>;
   closeDrawer: () => void;
   openChatWithTransition: (id: string, snapshot?: Chat | null) => Promise<void>;
@@ -48,7 +45,6 @@ export function useAppNavigationActions({
   onboardingMode,
   activeBridgeProfile,
   browserReturnScreen,
-  bridgeUrl,
   mainOpeningChatId,
   activeChat,
   gitChat,
@@ -68,8 +64,6 @@ export function useAppNavigationActions({
   setSelectedChatId,
   setActiveChat,
   setGitChat,
-  setOnboardingMode,
-  setOnboardingReturnScreen,
   setSettingsAllowsDrawerGesture,
   closeDrawer,
   openChatWithTransition,
@@ -234,27 +228,6 @@ export function useAppNavigationActions({
     setCurrentScreen('Terms');
   }, [chatTransitionRequestIdRef, setChatTransitionChatId, setCurrentScreen, setMainOpeningChatId]);
 
-  const handleEditBridgeProfile = useCallback(() => {
-    setOnboardingMode(bridgeUrl ? 'edit' : 'initial');
-    setOnboardingReturnScreen(currentScreen === 'Onboarding' ? 'Settings' : currentScreen);
-    setCurrentScreen('Onboarding');
-    closeDrawer();
-  }, [bridgeUrl, closeDrawer, currentScreen, setCurrentScreen, setOnboardingMode, setOnboardingReturnScreen]);
-
-  const handleAddBridgeProfile = useCallback(() => {
-    setOnboardingMode('add');
-    setOnboardingReturnScreen(currentScreen === 'Onboarding' ? 'Settings' : currentScreen);
-    setCurrentScreen('Onboarding');
-    closeDrawer();
-  }, [closeDrawer, currentScreen, setCurrentScreen, setOnboardingMode, setOnboardingReturnScreen]);
-
-  const handleOpenBridgeRecoveryGuide = useCallback(() => {
-    setOnboardingMode('reconnect');
-    setOnboardingReturnScreen(currentScreen === 'Onboarding' ? 'Settings' : currentScreen);
-    setCurrentScreen('Onboarding');
-    closeDrawer();
-  }, [closeDrawer, currentScreen, setCurrentScreen, setOnboardingMode, setOnboardingReturnScreen]);
-
   const handleHardwareBackPress = useCallback(() => {
     if (drawerVisibleRef.current || drawerOpenRef.current) {
       closeDrawer();
@@ -322,8 +295,5 @@ export function useAppNavigationActions({
     handleCloseGit,
     openPrivacy,
     openTerms,
-    handleEditBridgeProfile,
-    handleAddBridgeProfile,
-    handleOpenBridgeRecoveryGuide,
   };
 }
